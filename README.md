@@ -108,14 +108,3 @@ app/
 - **Object Storage**: MinIO
 - **File Parsing**: pypdf + python-docx + python-pptx
 
-## 与原 Java 版本的对应关系
-
-| Java | Python |
-|------|--------|
-| Spring Boot | FastAPI + Uvicorn |
-| Spring AI ChatClient | openai.AsyncOpenAI |
-| MyBatis-Plus | SQLAlchemy 2.0 |
-| Redisson RBucket | redis-py SETNX |
-| Sinks.Many + Flux | AsyncGenerator + StreamingResponse |
-| BeanOutputConverter | Pydantic |
-| @RestControllerAdvice | FastAPI exception_handler |
