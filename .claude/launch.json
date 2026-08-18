@@ -1,0 +1,9 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dodo-agent",
+      "url": "http://localhost:8899/blueprint.html"
+    }
+  ]
+}

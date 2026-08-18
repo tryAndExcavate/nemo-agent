@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from app.config import settings
-from app.api import agent, file, session
+from app.api import agent, file, session, models, base, chat
 from app.services.task_manager import task_manager
 from app.utils.http_client import close_http_client
 
@@ -51,6 +51,9 @@ app.add_middleware(
 app.include_router(agent.router)
 app.include_router(file.router)
 app.include_router(session.router)
+app.include_router(models.router)
+app.include_router(base.router)
+app.include_router(chat.router)
 
 
 # ===== 静态文件路由（纯 @app.get 方式，不用 mount） =====
@@ -83,6 +86,15 @@ async def serve_favicon():
 async def root():
     index = STATIC_DIR / "index.html"
     return HTMLResponse(index.read_text(encoding="utf-8"))
+
+
+@app.get("/blueprint.html", response_class=HTMLResponse)
+async def blueprint_page():
+    """可插拔大模型基座 - 蓝图 / 模型仓库管理页。"""
+    bp = STATIC_DIR / "blueprint.html"
+    if not bp.is_file():
+        return JSONResponse(status_code=404, content={"detail": "blueprint.html Not Found"})
+    return HTMLResponse(bp.read_text(encoding="utf-8"))
 
 
 # ===== 全局异常处理 =====

@@ -1,5 +1,7 @@
 import io
 import logging
+from datetime import timedelta
+
 from minio import Minio
 from app.config import settings
 
@@ -70,8 +72,12 @@ class MinioService:
             response.release_conn()
 
     def get_public_url(self, object_name: str) -> str:
-        protocol = "https" if settings.minio_secure else "http"
-        return f"{protocol}://{settings.minio_endpoint}/{self.bucket_name}/{object_name}"
+        download_url = self.client.presigned_get_object(
+            bucket_name=self.bucket_name,
+            object_name=object_name,
+            expires=timedelta(hours=2)
+        )
+        return f"{download_url}"
 
     def delete_file(self, object_name: str):
         try:

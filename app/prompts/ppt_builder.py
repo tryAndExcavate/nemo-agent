@@ -153,6 +153,7 @@ def get_schema_generation_prompt(template_schema: str, outline: str) -> str:
 }}
 
 ## 字段属性说明（固定格式）
+字段名统一使用驼峰命名（camelCase）：pageType / pageDesc / templatePageIndex / fontLimit。
 
 ### type = "text" （文本字段）
 {{
@@ -209,6 +210,7 @@ def get_summary_prompt(requirement: str, file_url: str, page_count: int) -> str:
 
 ## 任务
 根据PPT生成需求和生成的文件，为用户提供简洁的PPT总结说明。
+并且在回复中给出文件链接
 
 ## PPT生成需求
 {requirement}

@@ -21,6 +21,7 @@ class WebSearchReActAgent(BaseAgent):
         self.max_rounds = max_rounds
 
     async def stream(self, conversation_id: str, question: str) -> AsyncGenerator[str, None]:
+        print("在此处A")
         task_info = await task_manager.register_task(conversation_id, "websearch")
         if task_info is None and await task_manager.has_running_task(conversation_id):
             yield BaseAgent.error_response("该会话正在执行中，请稍后再试")

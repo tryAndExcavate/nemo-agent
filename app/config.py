@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     minio_bucket_name: str = "rag-test2"
     minio_secure: bool = False
 
+    # ChromaDB 向量存储
+    chroma_data_path: str = "./chroma_data"
+
     # PostgreSQL pgvector
     pgvector_host: str = "127.0.0.1"
     pgvector_port: int = 5432
@@ -53,6 +56,10 @@ class Settings(BaseSettings):
 
     # Image Generation
     grsai_nanobanana_api_key: str = ""
+
+    # 可插拔大模型基座（llm_core）——模型配置 api_key 加密密钥（Fernet）
+    # 留空时 llm_core.store 会自动生成一个并落盘到 models_secret.key，无需手工配置
+    model_config_secret_key: str = ""
 
     @property
     def mysql_url(self) -> str:

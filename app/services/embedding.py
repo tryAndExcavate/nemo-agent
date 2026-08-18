@@ -21,13 +21,19 @@ class EmbeddingService:
         )
         self.embed_model = settings.dashscope_embedding_model
 
-        # ChromaDB 持久化存储
-        self.chroma_client = chromadb.PersistentClient(
-            path="./chroma_data",
-        )
+        # ChromaDB 持久化存储 —— 懒加载，避免启动时 Rust 绑定在部分环境崩溃
+        self._chroma_client = None
 
         # 文案切分器（跟 Java 一致：500 字符，50 重叠）
         self.splitter = OverlapParagraphTextSplitter(chunk_size=500, overlap=50)
+
+    @property
+    def chroma_client(self):
+        if self._chroma_client is None:
+            self._chroma_client = chromadb.PersistentClient(
+                path=settings.chroma_data_path,
+            )
+        return self._chroma_client
 
     # ========= 嵌入 =========
     async def embed(self, texts: list[str]) -> list[list[float]]:

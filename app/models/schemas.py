@@ -1,6 +1,13 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Any
 from datetime import datetime
+
+
+def _to_camel(s: str) -> str:
+    """snake_case -> camelCase，用于 PPT schema 与 render_ppt.py 契约对齐。"""
+    parts = s.split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
 
 
 # --- BaseResult equivalent ---
@@ -129,6 +136,8 @@ class TemplateSelectionResult(BaseModel):
 
 
 class FieldData(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
     type: str  # text, image, background
     content: str
     font_limit: Optional[int] = None
@@ -136,6 +145,8 @@ class FieldData(BaseModel):
 
 
 class Slide(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
     page_type: str
     page_desc: str
     template_page_index: int
