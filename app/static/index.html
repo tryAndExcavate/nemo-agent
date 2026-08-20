@@ -37,15 +37,64 @@
                         <i class="fas fa-plus"></i>
                         <span>新对话</span>
                     </button>
+                    <!-- 归档/活跃切换标签 -->
+                    <div class="tab-switch">
+                        <span :class="['tab', { active: currentStatus === 'active' }]"
+                              @click="switchTab('active')">对话</span>
+                        <span :class="['tab', { active: currentStatus === 'archived' }]"
+                              @click="switchTab('archived')">归档</span>
+                    </div>
                 </div>
                 <div class="chat-list">
-                    <div v-for="chat in chatList" :key="chat.id"
+                    <div v-for="chat in filteredChatList" :key="chat.id"
                          :class="['chat-item', { active: currentChatId === chat.id }]"
                          @click="selectChat(chat.id)">
-                        <span class="chat-title">{{ chat.title }}</span>
-                        <span v-if="!chat.isNew" class="delete-btn" @click.stop="deleteChat(chat.id)">
-                            <i class="fas fa-trash-alt"></i>
+                        <!-- 标题显示/编辑 -->
+                        <span v-if="editingChatId !== chat.id"
+                              class="chat-title"
+                              @dblclick="startRename(chat.id, $event)">
+                            {{ chat.title }}
                         </span>
+                        <input v-else
+                               type="text"
+                               class="rename-input"
+                               :value="chat.title"
+                               @blur="commitRename(chat.id, $event)"
+                               @keydown.enter="commitRename(chat.id, $event)"
+                               @keydown.escape="cancelRename"
+                               ref="renameInput">
+                        <!-- 操作按钮 -->
+                        <span class="chat-actions">
+                            <button v-if="currentStatus === 'active'"
+                                    class="action-btn menu-btn"
+                                    title="更多操作"
+                                    @click.stop="toggleMenu(chat.id)">
+                                <i class="fas fa-ellipsis-v"></i>
+                            </button>
+                            <button v-if="currentStatus === 'archived'"
+                                    class="action-btn restore-btn"
+                                    title="恢复"
+                                    @click.stop="restoreChat(chat.id)">
+                                <i class="fas fa-undo"></i>
+                            </button>
+                            <button v-if="currentStatus === 'archived'"
+                                    class="action-btn delete-btn"
+                                    title="删除"
+                                    @click.stop="openDeleteModal(chat.id)">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </span>
+                        <!-- 下拉菜单（活跃会话） -->
+                        <div v-if="currentStatus === 'active' && menuOpenId === chat.id"
+                             class="dropdown-menu"
+                             @click.stop>
+                            <button class="dropdown-item" @click.stop="startRenameFromMenu(chat.id)">
+                                <i class="fas fa-edit"></i> 修改标题
+                            </button>
+                            <button class="dropdown-item archive-item" @click.stop="archiveChat(chat.id)">
+                                <i class="fas fa-archive"></i> 归档
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="sidebar-footer">
@@ -162,6 +211,23 @@
                                     <span class="dot"></span>
                                     <span class="dot"></span>
                                     <span class="dot"></span>
+                                </div>
+
+                                <!-- Token 消耗统计 -->
+                                <div v-if="msg.usage && msg.usage.total_tokens > 0" class="usage-bar">
+                                    <i class="fas fa-coins usage-icon"></i>
+                                    <span class="usage-detail">
+                                        {{ msg.usage.total_tokens }} tokens
+                                        <span v-if="msg.usage.prompt_tokens" class="usage-breakdown">
+                                            (输入 {{ msg.usage.prompt_tokens }} / 输出 {{ msg.usage.completion_tokens }})
+                                        </span>
+                                    </span>
+                                    <span v-if="msg.usage.estimated_cost > 0" class="usage-cost">
+                                        ≈ ¥{{ msg.usage.estimated_cost.toFixed(4) }}
+                                    </span>
+                                    <span v-if="msg.usage.is_estimated" class="usage-estimated" title="本地估算值">
+                                        <i class="fas fa-question-circle"></i>
+                                    </span>
                                 </div>
 
                                 <!-- 参考链接 -->
@@ -314,6 +380,27 @@
                 <div class="confirm-buttons">
                     <button class="confirm-btn cancel" @click="confirmCancel">取消</button>
                     <button class="confirm-btn danger" @click="confirmOk">确认删除</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 删除确认弹窗 -->
+        <div class="modal-overlay" id="deleteModal" v-if="showDeleteModal" @click.self="closeDeleteModal">
+            <div class="modal-content">
+                <h3>⚠️ 确认删除</h3>
+                <p>此操作将<strong>永久删除</strong>该对话及全部消息记录，且<strong>不可恢复</strong>。</p>
+                <p>请输入 <code>DELETE</code> 确认操作：</p>
+                <input type="text"
+                       v-model="deleteConfirmText"
+                       placeholder="输入 DELETE"
+                       class="delete-confirm-input">
+                <div class="modal-actions">
+                    <button class="btn-cancel" @click="closeDeleteModal">取消</button>
+                    <button class="btn-danger"
+                            :disabled="deleteConfirmText !== 'DELETE'"
+                            @click="confirmDelete">
+                        确认删除
+                    </button>
                 </div>
             </div>
         </div>

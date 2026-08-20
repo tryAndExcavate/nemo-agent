@@ -46,16 +46,6 @@ class FileReActAgent(BaseAgent):
             file_info_svc = FileInfoService(db)
             file_record = await file_info_svc.get_by_file_id(file_id)
 
-            messages: list[dict] = [
-                {"role": "system", "content": get_file_prompt()},
-            ]
-            history = await svc.find_recent_by_session_id(conversation_id, 30)
-            for record in reversed(history):
-                if record.question:
-                    messages.append({"role": "user", "content": record.question})
-                if record.answer:
-                    messages.append({"role": "assistant", "content": record.answer})
-
             # 构建用户消息 — 图片/文本不同处理
             if file_record and self._is_image(file_record.file_type):
                 user_msg = self._build_image_message(file_record)
@@ -65,6 +55,15 @@ class FileReActAgent(BaseAgent):
                     "content": f"<question>{question}</question>\n<fileid>{file_id}</fileid>"
                 }
 
+            # 使用上下文压缩器智能管理历史消息
+            system_prompt = get_file_prompt()
+            compressed = await self.context_compressor.compress(
+                conversation_id=conversation_id,
+                system_prompt=system_prompt,
+                current_input=user_msg.get("content", ""),
+                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000}
+            )
+            messages = compressed.messages
             messages.append(user_msg)
 
             final_answer_buffer: list[str] = []
@@ -87,6 +86,7 @@ class FileReActAgent(BaseAgent):
                     stream = await self.llm_client.chat.completions.create(
                         model=self.model, messages=messages, tools=self.tools,
                         temperature=0.7, stream=True,
+                        stream_options={"include_usage": True},  # 启用 usage 提取
                     )
                     async for chunk in stream:
                         if task_info and task_info.cancel_event.is_set():
@@ -94,6 +94,12 @@ class FileReActAgent(BaseAgent):
                             return
                         delta = chunk.choices[0].delta if chunk.choices else None
                         if delta is None:
+                            # 检查是否是最后一个带 usage 的 chunk
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                self._total_usage["prompt_tokens"] = getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                                self._total_usage["completion_tokens"] = getattr(chunk.usage, 'completion_tokens', 0) or 0
+                                self._total_usage["total_tokens"] = getattr(chunk.usage, 'total_tokens', 0) or 0
+                                self._total_usage["call_count"] += 1
                             continue
                         if delta.tool_calls:
                             for tc_delta in delta.tool_calls:
@@ -151,10 +157,13 @@ class FileReActAgent(BaseAgent):
                     finished = True
 
             await self._save_answer("".join(final_answer_buffer), "".join(thinking_buffer))
+            yield self.usage_response(model_name=self.model, provider="openai_compatible")
+        except Exception as e:
+            logger.error(f"Agent 执行异常: {e}")
+            yield self.error_response(f"执行出错: {e}")
         finally:
             await self._close_db()
-
-        await task_manager.stop_task(conversation_id)
+            await task_manager.stop_task(conversation_id)
 
     def _build_image_message(self, file_record) -> dict:
         """对应 Java handleImageFile(): 图片文件用描述文字作为上下文"""

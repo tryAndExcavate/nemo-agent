@@ -32,6 +32,7 @@ class AgentResponse:
     TYPE_REFERENCE = "reference"
     TYPE_ERROR = "error"
     TYPE_RECOMMEND = "recommend"
+    TYPE_USAGE = "usage"      # 新增：Token 消耗统计事件
 
 
 # --- Request schemas ---

@@ -16,19 +16,17 @@ const testConnection = async (backendUrl) => {
 
 const loadChats = async (backendUrl) => {
     try {
-        const response = await fetch(`${backendUrl}/session/list?pageNum=1&pageSize=100`, {
+        const response = await fetch(`${backendUrl}/conversations/active?user_id=1`, {
             method: 'GET', headers: { 'Accept': 'application/json' }
         });
         if (!response.ok) throw new Error('获取会话列表失败');
         const result = await response.json();
-        if (result.code === 200 && result.data && result.data.records) {
-            return result.data.records.map(item => ({
-                id: item.session_id,          // Python 后端用 session_id
-                title: item.question
-                    ? item.question.substring(0, 20) + (item.question.length > 20 ? '...' : '')
-                    : '新对话',
+        if (result.items) {
+            return result.items.map(item => ({
+                id: item.session_id,
+                title: item.title || '新对话',
                 agentType: item.agent_type,
-                fileid: item.fileid || null,
+                fileid: null,
                 messages: []
             }));
         }
@@ -36,6 +34,41 @@ const loadChats = async (backendUrl) => {
     } catch (error) {
         console.error('加载会话列表失败:', error);
         return [];
+    }
+};
+
+const loadArchivedChats = async (backendUrl) => {
+    try {
+        const response = await fetch(`${backendUrl}/conversations/archived?user_id=1`, {
+            method: 'GET', headers: { 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error('获取归档会话列表失败');
+        const result = await response.json();
+        if (result.items) {
+            return result.items.map(item => ({
+                id: item.session_id,
+                title: item.title || '新对话',
+                agentType: item.agent_type,
+                fileid: null,
+                messages: []
+            }));
+        }
+        return [];
+    } catch (error) {
+        console.error('加载归档会话列表失败:', error);
+        return [];
+    }
+};
+
+const activateChat = async (backendUrl, sessionId) => {
+    try {
+        const response = await fetch(`${backendUrl}/conversations/${sessionId}/activate?user_id=1`, {
+            method: 'POST'
+        });
+        return response.ok;
+    } catch (error) {
+        console.error('激活会话失败:', error);
+        return false;
     }
 };
 
@@ -109,6 +142,6 @@ const stopStream = async (backendUrl, conversationId) => {
 };
 
 window.APP_API = {
-    testConnection, loadChats, getChatDetail,
+    testConnection, loadChats, loadArchivedChats, activateChat, getChatDetail,
     deleteChat, uploadFile, getStreamChatUrl, stopStream
 };

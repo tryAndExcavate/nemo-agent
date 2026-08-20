@@ -1,0 +1,27 @@
+feat(ppt): 完善 PPT 渲染链路，支持人在回路续跑与基座激活模型
+
+今天把 PPT 生成相关的一整条链路补齐并跑通了，主要分四块：
+
+1. 基座激活模型接入实际业务调用链
+
+新增 app/api/base.py，提供 GET/POST/DELETE /base/active 管理"基座当前挂载的模型"。
+llm_core/store.py 增加 ActiveModelDB 单行表 + ConfigStore.get/set/clear_active_model_id()持久化。
+业务 Agent 入口 app/api/agent.py 的 5 个端点统一改为 _resolve_llm()：优先用基座激活模型（base_url/api_key/model_name），未激活时回退到原 DeepSeek 配置，业务不中断。
+同时把可插拔大模型基座页重新设计：从多节点 LiteGraph 蓝图简化为"单个基座节点 + 模型仓库"，去掉版本化（草稿/发布/历史/回滚），改为保存即生效。
+
+2. PPT 人回路（暂停续跑 + 锁释放）
+
+修复暂停生成时 return 断流导致 Redis 任务锁不释放的问题：整个流程包进 try/finally 无条件 task_manager.stop_task。
+新增 AWAITING_INFO 状态：信息不足时保存需求、标记待补充；用户补充信息后 stream() 自动识别并续跑（合并旧需求+补充，跳过澄清直接继续主流程），主流程抽成 _run_pipeline() 供首轮/续跑复用。
+
+3. PPT Schema 契约统一 camelCase
+
+修复渲染 15 个字段校验错误：prompt 曾要求 LLM 输出 camelCase 而 pydantic 模型是 snake_case。
+schemas.py 的 Slide/FieldData 加 camelCase 别名（populate_by_name+alias_generator），prompt 同步统一为 camelCase，渲染脚本也读 camel——整条链对齐。
+加 _normalize_camel_keys 兜底，LLM 偶发驼峰也不崩渲染。
+
+4. 集成完善版 render 脚本
+
+将 开发记录/完善生成ppt/render_ppt.py 复制进 app/services/ 并接入。
+重写 ppt_render.py 调用契约：原来传 --schema（脚本根本不支持）、没传模板；现在改为 --template <模板> + env PPT_SCHEMA，模板路径回退解析到 app/templates/{code}.pptx。
+端到端验证：真实模板 ai.pptx + camelCase schema 渲染成功，templatePageIndex 页映射正确。

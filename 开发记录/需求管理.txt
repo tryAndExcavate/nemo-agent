@@ -1,0 +1,467 @@
+# 大模型对话产品主流需求点 — 工程化清单
+
+结合你现在的架构（FastAPI + 可插拔基座 + Adapter层），我按**优先级和工程复杂度**给你梳理一批主流需求，并挑几个最有工程深度的详细展开架构设计。
+
+---
+
+## 一、需求全景图（按优先级排序）
+
+| 优先级 | 需求 | 核心难点 | 与现有架构的耦合度 |
+|---|---|---|---|
+| ⭐⭐⭐ | 多会话管理（会话列表/归档/重命名） | 数据模型设计 | 低，独立新增 |
+| ⭐⭐⭐ | 上下文长度管理（超长对话截断/摘要压缩） | Token预算控制算法 | 高，接入 LLMService |
+| ⭐⭐⭐ | 停止生成 / 重新生成 / 消息分支 | 流式请求的取消机制 | 中，接入 chat_stream |
+| ⭐⭐⭐ | Function Calling / 工具调用 | 多轮工具编排逻辑 | 高，新增 Adapter 能力 |
+| ⭐⭐ | RAG 检索增强 | 向量库选型、召回策略 | 中，独立服务+接入 |
+| ⭐⭐ | 语义缓存（省成本） | 相似度阈值、缓存失效策略 | 中，接入 LLMService 前置 |
+| ⭐⭐ | 内容安全审核 | 敏感词/模型双重过滤 | 中，接入请求前后 |
+| ⭐⭐ | 用户反馈（点赞/点踩/纠错） | 数据闭环设计 | 低，独立新增 |
+| ⭐ | 多模态（图片/文件上传） | Adapter 层协议差异更大 | 高 |
+| ⭐ | 智能路由（按任务自动选模型） | 路由策略/成本质量权衡 | 高，扩展 Registry |
+
+下面挑 **5 个最值得深入做、且最能体现工程能力** 的详细展开。
+
+---
+
+## 二、上下文长度管理（Token预算控制）
+
+这是**几乎所有对话产品都会踩坑的地方**——对话久了直接超出模型上下文窗口报错，或者成本失控。
+
+### 核心思路：滑动窗口 + 摘要压缩混合策略
+
+```python
+# context_manager.py
+from typing import List, Dict
+import tiktoken
+
+
+class ContextManager:
+    """
+    负责在发给模型前，把历史消息裁剪到 token 预算内
+    策略：保留最近N轮原文 + 更早的历史做摘要压缩
+    """
+
+    def __init__(self, max_context_tokens: int = 8000, reserve_for_reply: int = 1000):
+        self.max_context_tokens = max_context_tokens
+        self.reserve_for_reply = reserve_for_reply  # 给回复预留的token空间
+        self.encoder = tiktoken.get_encoding("cl100k_base")
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.encoder.encode(text))
+
+    def count_messages_tokens(self, messages: List[Dict]) -> int:
+        return sum(self.count_tokens(m["content"]) for m in messages) + len(messages) * 4
+
+    async def build_context(
+        self,
+        system_prompt: str,
+        history: List[Dict],
+        current_input: str,
+        summarize_fn=None,  # 传入 llm_service.chat 用于生成摘要
+    ) -> List[Dict]:
+        budget = self.max_context_tokens - self.reserve_for_reply
+        budget -= self.count_tokens(system_prompt) + self.count_tokens(current_input)
+
+        # 从最近的消息开始往前累加，直到超预算
+        kept = []
+        used = 0
+        cut_index = len(history)
+        for i in range(len(history) - 1, -1, -1):
+            t = self.count_tokens(history[i]["content"])
+            if used + t > budget:
+                cut_index = i + 1
+                break
+            used += t
+            kept.insert(0, history[i])
+        else:
+            cut_index = 0
+
+        # 被裁掉的更早历史 -> 生成摘要，作为一条 system 消息插入
+        messages = [{"role": "system", "content": system_prompt}]
+        if cut_index > 0 and summarize_fn:
+            old_messages = history[:cut_index]
+            summary = await self._summarize(old_messages, summarize_fn)
+            messages.append({
+                "role": "system",
+                "content": f"[以下是更早对话的摘要，供参考]\n{summary}"
+            })
+        messages.extend(kept)
+        messages.append({"role": "user", "content": current_input})
+        return messages
+
+    async def _summarize(self, messages: List[Dict], summarize_fn) -> str:
+        text = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+        prompt = f"请将以下对话浓缩为200字以内的要点摘要：\n\n{text}"
+        result = await summarize_fn([{"role": "user", "content": prompt}])
+        return result.content
+```
+
+**接入点**：在 `LLMService.chat()` 之前调用 `ContextManager.build_context()`，业务层不需要感知裁剪逻辑。
+
+**工程可行性关键点**：
+- 摘要压缩本身也是一次模型调用，**要用便宜的小模型做摘要**（比如挂一个专门的"摘要基座"模型，复用你现在的多模型架构）
+- 摘要结果要**缓存**，不要每轮对话都重新摘要一次早期历史（可以做增量摘要：新一批被裁掉的消息 + 上一次摘要 → 合并成新摘要）
+- 需要给用户一个**可见的提示**："此对话较长，早期内容已被智能压缩"，避免用户困惑为什么模型"忘记"了细节
+
+---
+
+## 三、停止生成 / 重新生成 / 消息分支（对话树）
+
+这是用户体验层面**几乎所有主流产品（ChatGPT/Claude）标配**的功能，工程上涉及流式请求的取消和数据结构改造。
+
+### 3.1 停止生成：用 asyncio.Task + 取消信号
+
+```python
+# generation_manager.py
+import asyncio
+from typing import Dict
+
+class GenerationManager:
+    """管理正在进行中的生成任务，支持中途取消"""
+    def __init__(self):
+        self._tasks: Dict[str, asyncio.Task] = {}
+
+    def register(self, request_id: str, task: asyncio.Task):
+        self._tasks[request_id] = task
+
+    def cancel(self, request_id: str) -> bool:
+        task = self._tasks.get(request_id)
+        if task and not task.done():
+            task.cancel()
+            return True
+        return False
+
+    def cleanup(self, request_id: str):
+        self._tasks.pop(request_id, None)
+
+gen_manager = GenerationManager()
+```
+
+```python
+@router.post("/api/agent/chat_stream")
+async def agent_chat_stream(req: ChatRequest):
+    request_id = req.request_id  # 前端生成的唯一id，发起时传入
+
+    async def event_generator():
+        try:
+            async for event in llm_service.chat_stream(req.messages):
+                yield format_sse(event)
+        except asyncio.CancelledError:
+            yield f"event: stopped\ndata: {{}}\n\n"
+        finally:
+            gen_manager.cleanup(request_id)
+
+    task = asyncio.current_task()
+    gen_manager.register(request_id, task)
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/api/agent/stop/{request_id}")
+async def stop_generation(request_id: str):
+    success = gen_manager.cancel(request_id)
+    return {"stopped": success}
+```
+
+前端：`fetch` 请求配合 `AbortController` 也能做，但**服务端知道任务被中断很重要**——否则模型那边还在持续生成、消耗token，只是前端不显示了，等于白花钱。所以取消要**双向**：前端 abort 请求 + 后端主动 cancel adapter 的底层请求。
+
+### 3.2 消息分支（重新生成 = 树结构而非链表）
+
+主流产品的对话历史其实不是一条链，而是一棵**树**——用户对某条回复不满意点"重新生成"，会产生兄弟节点，切换分支时展示不同路径。
+
+```python
+# 数据结构设计
+{
+  "conversation_id": "conv_001",
+  "messages": {
+    "msg_1": {"role": "user", "content": "你好", "parent_id": null, "children": ["msg_2"]},
+    "msg_2": {"role": "assistant", "content": "你好！", "parent_id": "msg_1", "children": ["msg_3", "msg_4"]},
+    "msg_3": {"role": "user", "content": "介绍下自己", "parent_id": "msg_2", "children": []},
+    "msg_4": {"role": "user", "content": "介绍下自己（重新生成后的分支）", "parent_id": "msg_2", "children": []}
+  },
+  "current_leaf": "msg_3"   // 当前展示的分支路径终点
+}
+```
+
+```python
+class ConversationTree:
+    """从 current_leaf 往上回溯到根，还原出当前分支的完整上下文"""
+    def get_path_to_root(self, messages: dict, leaf_id: str) -> list:
+        path = []
+        node_id = leaf_id
+        while node_id:
+            node = messages[node_id]
+            path.insert(0, node)
+            node_id = node.get("parent_id")
+        return path
+
+    def regenerate(self, messages: dict, target_msg_id: str) -> str:
+        """重新生成：在目标消息的父节点下新建一个兄弟分支"""
+        parent_id = messages[target_msg_id]["parent_id"]
+        new_id = f"msg_{uuid.uuid4().hex[:8]}"
+        messages[new_id] = {
+            "role": "assistant", "content": "", "parent_id": parent_id, "children": []
+        }
+        messages[parent_id]["children"].append(new_id)
+        return new_id
+```
+
+**这个改造对现有架构的影响**：`ContextManager.build_context()` 的输入历史不再是简单的 list，而是 `get_path_to_root()` 的返回值——这一层要在会话存储层做好，LLMService 不需要变。
+
+---
+
+## 四、Function Calling / 工具调用（Agent能力核心）
+
+这是从"聊天机器人"升级到"智能体"的**分水岭功能**，工程复杂度较高，但你现有的 Adapter 架构天然适合扩展这个能力。
+
+### 架构设计：工具定义 → 模型决策 → 工具执行 → 结果回填
+
+```python
+# tools/base.py
+from abc import ABC, abstractmethod
+from typing import Dict, Any
+
+class BaseTool(ABC):
+    name: str
+    description: str
+    parameters: Dict[str, Any]  # JSON Schema
+
+    @abstractmethod
+    async def execute(self, **kwargs) -> str:
+        ...
+
+    def to_schema(self) -> dict:
+        """转换成 OpenAI function calling 标准格式"""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            }
+        }
+
+
+# tools/weather_tool.py
+class WeatherTool(BaseTool):
+    name = "get_weather"
+    description = "查询指定城市的实时天气"
+    parameters = {
+        "type": "object",
+        "properties": {"city": {"type": "string", "description": "城市名称"}},
+        "required": ["city"]
+    }
+
+    async def execute(self, city: str) -> str:
+        # 实际调用天气API
+        return f"{city}今天晴，25度"
+```
+
+```python
+# tool_registry.py
+class ToolRegistry:
+    def __init__(self):
+        self._tools: Dict[str, BaseTool] = {}
+
+    def register(self, tool: BaseTool):
+        self._tools[tool.name] = tool
+
+    def get_schemas(self) -> list:
+        return [t.to_schema() for t in self._tools.values()]
+
+    async def execute(self, name: str, arguments: dict) -> str:
+        tool = self._tools.get(name)
+        if not tool:
+            return f"错误：工具 {name} 不存在"
+        try:
+            return await tool.execute(**arguments)
+        except Exception as e:
+            return f"工具执行失败: {e}"
+
+tool_registry = ToolRegistry()
+tool_registry.register(WeatherTool())
+```
+
+### Adapter 层扩展支持 tool_calls
+
+```python
+class OpenAIAdapter(BaseLLMAdapter):
+    async def chat_with_tools(self, messages, tools: list, **kwargs) -> dict:
+        resp = await self.client.chat.completions.create(
+            model=self.config["model_name"],
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+        )
+        msg = resp.choices[0].message
+        if msg.tool_calls:
+            return {
+                "type": "tool_calls",
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.function.name, "arguments": json.loads(tc.function.arguments)}
+                    for tc in msg.tool_calls
+                ]
+            }
+        return {"type": "content", "content": msg.content}
+```
+
+### 核心编排逻辑：多轮工具调用循环
+
+```python
+# llm_service.py 新增
+async def chat_with_tools(self, messages: list, max_rounds: int = 5) -> str:
+    config = registry.get_active_config()
+    adapter = await self._get_adapter(config)
+    tools_schema = tool_registry.get_schemas()
+
+    for round_idx in range(max_rounds):
+        result = await adapter.chat_with_tools(messages, tools=tools_schema)
+
+        if result["type"] == "content":
+            return result["content"]  # 模型不再需要工具，直接返回答案
+
+        # 模型请求调用工具 -> 执行 -> 把结果塞回messages -> 让模型继续推理
+        messages.append({"role": "assistant", "tool_calls": result["tool_calls"]})
+        for call in result["tool_calls"]:
+            tool_result = await tool_registry.execute(call["name"], call["arguments"])
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": tool_result
+            })
+
+    return "工具调用轮次超限，未能完成任务"
+```
+
+**工程可行性关键点**：
+- **不同平台的 function calling 协议差异很大**（OpenAI / Claude / 国产模型的字段名和触发方式都不同），这一层必须在 Adapter 内部做协议转换，`chat_with_tools` 对外必须返回统一格式
+- **必须设置 `max_rounds` 熔断**，防止模型陷入死循环调用工具（工具A调用工具B又调回工具A）
+- **工具执行要有超时和异常隔离**，一个工具挂了不能拖死整个对话
+- 前端需要**展示"正在调用XX工具..."的中间状态**，否则用户会觉得卡住了——这需要在流式协议里加一个 `event: tool_call` 事件类型
+
+---
+
+## 五、语义缓存（成本优化，性价比极高）
+
+很多产品的对话中有大量**语义重复的问题**（比如客服场景"怎么退款"会被问几百次），如果每次都重新调用大模型，成本很高。
+
+### 架构设计
+
+```python
+# semantic_cache.py
+import hashlib
+import numpy as np
+from typing import Optional
+
+class SemanticCache:
+    """
+    两级缓存：
+    1. 精确匹配（hash完全相同的问题）—— 内存字典，几乎零成本
+    2. 语义相似匹配（embedding余弦相似度）—— 向量库，处理"怎么退款"vs"如何退钱"这类
+    """
+
+    def __init__(self, embedding_fn, similarity_threshold: float = 0.92):
+        self.exact_cache: dict = {}
+        self.embedding_fn = embedding_fn  # 复用你的 llm_service 做 embedding
+        self.threshold = similarity_threshold
+        self.vector_store = []  # 生产环境应换成 faiss / milvus / qdrant
+
+    def _hash_key(self, text: str) -> str:
+        return hashlib.md5(text.strip().lower().encode()).hexdigest()
+
+    async def get(self, query: str) -> Optional[str]:
+        # 一级：精确匹配
+        key = self._hash_key(query)
+        if key in self.exact_cache:
+            return self.exact_cache[key]
+
+        # 二级：语义相似度匹配
+        query_vec = await self.embedding_fn(query)
+        for item in self.vector_store:
+            sim = self._cosine_sim(query_vec, item["vector"])
+            if sim >= self.threshold:
+                return item["answer"]
+        return None
+
+    async def set(self, query: str, answer: str):
+        key = self._hash_key(query)
+        self.exact_cache[key] = answer
+        query_vec = await self.embedding_fn(query)
+        self.vector_store.append({"query": query, "vector": query_vec, "answer": answer})
+
+    def _cosine_sim(self, a, b) -> float:
+        a, b = np.array(a), np.array(b)
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+```
+
+**接入 LLMService**：
+
+```python
+async def chat(self, messages, use_cache: bool = True, **kwargs):
+    if use_cache:
+        last_user_msg = messages[-1]["content"]
+        cached = await self.semantic_cache.get(last_user_msg)
+        if cached:
+            return ChatResult(content=cached, usage=TokenUsage(is_estimated=False, total_tokens=0))
+
+    result = await self._real_chat(messages, **kwargs)
+
+    if use_cache:
+        await self.semantic_cache.set(messages[-1]["content"], result.content)
+    return result
+```
+
+**工程可行性关键点**：
+- **只适合"知识型/FAQ型"对话场景**，多轮上下文强相关的对话（比如角色扮演、创作类）不适合缓存，容易命中错误答案——需要一个开关，按会话类型决定是否启用
+- 相似度阈值 `0.92` 需要根据实际业务反复调参，太低会导致答非所问
+- 生产环境向量存储建议用 **faiss（本地）或 Qdrant/Milvus（分布式）**，避免内存 list 线性扫描在数据量大时性能崩溃
+- 需要**缓存失效机制**：知识库更新后，旧缓存要能清空或者设置 TTL
+
+---
+
+## 六、内容安全审核（合规刚需，不做会有法律风险）
+
+### 双层过滤架构
+
+```python
+# content_safety.py
+class ContentSafetyFilter:
+    def __init__(self):
+        self.sensitive_words = self._load_sensitive_words()  # 本地敏感词库
+
+    def check_input(self, text: str) -> tuple[bool, str]:
+        """请求前过滤：本地敏感词 + 可选的第三方审核API（如百度/阿里内容安全）"""
+        for word in self.sensitive_words:
+            if word in text:
+                return False, f"输入包含违规内容: {word}"
+        return True, ""
+
+    async def check_output(self, text: str) -> tuple[bool, str]:
+        """
+        输出后过滤：模型本身也可能生成不当内容
+        建议接入专门的内容审核API做二次校验，而不是只依赖敏感词表
+        """
+        # 调用第三方审核服务示例（伪代码，实际替换成具体厂商SDK）
+        result = await self._call_moderation_api(text)
+        if result.get("risk_level") == "high":
+            return False, "生成内容未通过安全审核"
+        return True, text
+```
+
+**接入位置**：在 `LLMService.chat()` 的最外层包一层——**请求前检查用户输入**，**流式生成时可以做增量检测**（每积累一段文本就检查一次，发现违规立即掐断流式输出，而不是等全部生成完才检查）。
+
+**工程可行性关键点**：
+- 敏感词库要支持**热更新**（不能改一个词就重启服务），可以做成和你现在 `models.json` 一样的模式——文件+内存缓存+reload接口
+- 流式场景下的**实时拦截**比非流式更复杂：需要维护一个滑动缓冲区，防止敏感词被拆成多个chunk从而绕过检测（比如"违规词"被拆成"违"+"规词"两个chunk）
+- 生产级别建议**不要只依赖自己写的敏感词表**，接入专业内容审核服务（各大云厂商都有），本地敏感词表只做第一道快速拦截
+
+---
+
+## 七、建议的实施优先级
+
+如果要一步步做，我建议这个顺序：
+
+1. **多会话管理**（工作量小，用户体验提升明显，是其他功能的地基）
+2. **上下文Token预算管理**（不做的话对话稍长就会直接报错，是稳定性问题）
+3. **停止生成**（用户体验刚需，实现相对简单）
+4. **Function Calling**（真正让"聊天"变成"智能体"，是差异化竞争力所在）
+5. **语义缓存 + 内容审核**（视业务规模和合规要求决定优先级，成本/风险控制类）

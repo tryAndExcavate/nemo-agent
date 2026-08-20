@@ -23,6 +23,14 @@ createApp({
         let confirmCallback = null;
         let _pendingDeleteId = null;
 
+        // ===== 多会话管理状态 =====
+        const currentStatus = ref('active');
+        const editingChatId = ref(null);
+        const showDeleteModal = ref(false);
+        const deleteConfirmText = ref('');
+        let pendingDeleteChatId = null;
+        const menuOpenId = ref(null);  // 下拉菜单打开的会话ID
+
         const messagesContainer = ref(null);
         const textareaInput = ref(null);
         let currentStreamContentDiv = null;
@@ -47,12 +55,21 @@ createApp({
             chatList.value = await APP_API.loadChats(backendUrl.value);
         };
 
+        const loadArchivedChatsFromStorage = async () => {
+            chatList.value = await APP_API.loadArchivedChats(backendUrl.value);
+        };
+
         // ===== 选中会话 =====
         const selectChat = async (chatId) => {
             currentChatId.value = chatId;
             const chat = chatList.value.find(c => c.id === chatId);
             if (!chat) return;
             if (chat.isNew) return;
+
+            // 异步激活会话（不阻塞）
+            APP_API.activateChat(backendUrl.value, chatId).catch(err =>
+                console.error('激活会话失败:', err)
+            );
 
             // 恢复 agent 类型
             if (chat.agentType) {
@@ -158,6 +175,30 @@ createApp({
         };
         const removeFile = () => { selectedFile.value = null; uploadedFileId.value = null; };
 
+        // ===== 异步生成标题 =====
+        const generateAndUpdateTitle = async (sessionId, message) => {
+            try {
+                // 调用后端生成标题并更新
+                const response = await fetch(`${backendUrl.value}/conversations/${sessionId}/generate-title?user_id=1`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.title) {
+                        // 更新本地会话标题
+                        const chat = chatList.value.find(c => c.id === sessionId);
+                        if (chat) {
+                            chat.title = result.title;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('生成标题失败，使用默认标题:', e);
+            }
+        };
+
         // ===== 发送消息 =====
         const sendMessage = async () => {
             if (isSending.value || isUploading.value) return;
@@ -173,7 +214,28 @@ createApp({
             if (textareaInput.value) textareaInput.value.style.height = 'auto';
 
             const chat = currentChat.value;
-            if (chat.isNew) chat.isNew = false;
+            if (chat.isNew) {
+                chat.isNew = false;
+                // 持久化到后端（不传递 initial_message，标题后续异步更新）
+                try {
+                    const response = await fetch(`${backendUrl.value}/conversations?user_id=1`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            session_id: chat.id,
+                            title: chat.title || '新对话'
+                        })
+                    });
+                    if (!response.ok) console.error('Failed to persist conversation');
+
+                    // 异步生成标题（不阻塞主流程）
+                    if (msg && msg.trim().length > 0) {
+                        generateAndUpdateTitle(chat.id, msg).catch(err =>
+                            console.error('生成标题失败:', err)
+                        );
+                    }
+                } catch (e) { console.error('Persist conversation error:', e); }
+            }
 
             // 添加用户消息
             chat.messages.push({
@@ -192,6 +254,7 @@ createApp({
                 content: '', thinking: [], timeline: [],
                 reference: [], recommend: [],
                 showTimeline: true, showReference: false, hasThinking: false,
+                usage: null,  // 新增：预先声明 usage 属性
                 timestamp: Date.now()
             };
             chat.messages.push(aiMsg);
@@ -274,6 +337,9 @@ createApp({
                 case STREAM_TYPES.RECOMMEND:
                     aiMsg.recommend = processRecommendations(data.content);
                     break;
+                case STREAM_TYPES.USAGE:
+                    aiMsg.usage = data.data || data.content || null;
+                    break;
                 case STREAM_TYPES.ERROR:
                     aiMsg.timeline.push({ type: 'error', message: data.message || data.content || '未知错误', detail: data.detail || '' });
                     break;
@@ -349,6 +415,124 @@ createApp({
             if (textareaInput.value) { textareaInput.value.style.height = 'auto'; textareaInput.value.style.height = textareaInput.value.scrollHeight + 'px'; }
         }));
 
+        // ===== 多会话管理方法 =====
+        const filteredChatList = computed(() => chatList.value);
+
+        const switchTab = async (status) => {
+            console.log('switchTab 被调用，status:', status);
+            currentStatus.value = status;
+            if (status === 'active') {
+                console.log('加载活跃会话...');
+                await loadChatsFromStorage();
+            } else {
+                console.log('加载归档会话...');
+                await loadArchivedChatsFromStorage();
+            }
+            console.log('加载完成，chatList:', chatList.value.length);
+        };
+
+        const startRename = (chatId, event) => {
+            event.stopPropagation();
+            editingChatId.value = chatId;
+            menuOpenId.value = null;  // 关闭下拉菜单
+            nextTick(() => {
+                const input = document.querySelector('.rename-input');
+                if (input) { input.focus(); input.select(); }
+            });
+        };
+
+        const startRenameFromMenu = (chatId) => {
+            editingChatId.value = chatId;
+            menuOpenId.value = null;  // 关闭下拉菜单
+            nextTick(() => {
+                const input = document.querySelector('.rename-input');
+                if (input) { input.focus(); input.select(); }
+            });
+        };
+
+        const toggleMenu = (chatId) => {
+            if (menuOpenId.value === chatId) {
+                menuOpenId.value = null;
+            } else {
+                menuOpenId.value = chatId;
+            }
+        };
+
+        const commitRename = async (chatId, event) => {
+            const newTitle = event.target.value.trim();
+            editingChatId.value = null;
+            if (!newTitle) return;
+
+            const chat = chatList.value.find(c => c.id === chatId);
+            if (chat && chat.title !== newTitle) {
+                try {
+                    await fetch(`${backendUrl.value}/conversations/${chatId}/rename?user_id=1`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: newTitle })
+                    });
+                    chat.title = newTitle;
+                } catch (e) { console.error('Rename failed:', e); }
+            }
+        };
+
+        const cancelRename = () => { editingChatId.value = null; };
+
+        const archiveChat = async (chatId) => {
+            try {
+                await fetch(`${backendUrl.value}/conversations/${chatId}/archive?user_id=1`, {
+                    method: 'PATCH'
+                });
+                // 刷新当前列表
+                if (currentStatus.value === 'active') {
+                    await loadChatsFromStorage();
+                } else {
+                    await loadArchivedChatsFromStorage();
+                }
+                if (currentChatId.value === chatId) currentChatId.value = null;
+            } catch (e) { console.error('Archive failed:', e); }
+        };
+
+        const restoreChat = async (chatId) => {
+            try {
+                await fetch(`${backendUrl.value}/conversations/${chatId}/restore?user_id=1`, {
+                    method: 'PATCH'
+                });
+                // 刷新当前列表
+                if (currentStatus.value === 'active') {
+                    await loadChatsFromStorage();
+                } else {
+                    await loadArchivedChatsFromStorage();
+                }
+                if (currentChatId.value === chatId) currentChatId.value = null;
+            } catch (e) { console.error('Restore failed:', e); }
+        };
+
+        const openDeleteModal = (chatId) => {
+            pendingDeleteChatId = chatId;
+            showDeleteModal.value = true;
+            deleteConfirmText.value = '';
+        };
+
+        const closeDeleteModal = () => {
+            showDeleteModal.value = false;
+            pendingDeleteChatId = null;
+            deleteConfirmText.value = '';
+        };
+
+        const confirmDelete = async () => {
+            if (!pendingDeleteChatId) return;
+            try {
+                await fetch(`${backendUrl.value}/conversations/${pendingDeleteChatId}?user_id=1`, {
+                    method: 'DELETE'
+                });
+                // 刷新归档列表
+                await loadArchivedChatsFromStorage();
+                if (currentChatId.value === pendingDeleteChatId) currentChatId.value = null;
+            } catch (e) { console.error('Delete failed:', e); }
+            closeDeleteModal();
+        };
+
         return {
             backendUrl, connectionError, agents, selectedAgent,
             chatList, currentChatId, currentChat, inputMessage,
@@ -358,7 +542,11 @@ createApp({
             createNewChat, selectChat, deleteChat, removeFile, handleFileSelect,
             sendMessage, stopMessage, toggleTimeline, toggleReference, copyMessage,
             renderMarkdown, formatFileSize,
-            showConfirmDialog, confirmTitle, confirmMessage, confirmOk, confirmCancel
+            showConfirmDialog, confirmTitle, confirmMessage, confirmOk, confirmCancel,
+            currentStatus, filteredChatList, switchTab,
+            editingChatId, startRename, startRenameFromMenu, toggleMenu, menuOpenId, commitRename, cancelRename,
+            archiveChat, restoreChat, showDeleteModal, deleteConfirmText,
+            openDeleteModal, closeDeleteModal, confirmDelete
         };
     }
 }).mount('#app');

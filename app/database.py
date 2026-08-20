@@ -17,3 +17,10 @@ async def get_db() -> AsyncSession:
             yield session
         finally:
             await session.close()
+
+
+async def init_db():
+    """初始化数据库，创建所有表。"""
+    from app.models.context_summary import ContextSummary
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

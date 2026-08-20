@@ -80,11 +80,20 @@ class PPTBuilderAgent(BaseAgent):
             ]
             stream = await self.llm_client.chat.completions.create(
                 model=self.model, messages=msgs, temperature=0.7, stream=True,
+                stream_options={"include_usage": True},  # 启用 usage 提取
             )
             requirement_buffer = ""
             async for chunk in stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
+                if delta is None:
+                    # 检查是否是最后一个带 usage 的 chunk
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        self._total_usage["prompt_tokens"] = getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                        self._total_usage["completion_tokens"] = getattr(chunk.usage, 'completion_tokens', 0) or 0
+                        self._total_usage["total_tokens"] = getattr(chunk.usage, 'total_tokens', 0) or 0
+                        self._total_usage["call_count"] += 1
+                    continue
+                if delta.content:
                     requirement_buffer += delta.content
                     yield self.text_response(delta.content)
 
@@ -94,6 +103,7 @@ class PPTBuilderAgent(BaseAgent):
                 await ppt_svc.update_status(ppt_inst.id, PptStatus.AWAITING_INFO)
                 yield self.text_response("\n信息不足，暂停生成\n")
                 yield self.text_response("请补充上述需要的信息，我会继续为您生成PPT。\n")
+                yield self.usage_response(model_name=self.model, provider="openai_compatible")
                 return
 
             await ppt_svc.update_requirement(ppt_inst.id, requirement_buffer)
@@ -122,6 +132,7 @@ class PPTBuilderAgent(BaseAgent):
         response = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, tools=self.tools, temperature=0.7,
         )
+        self._accumulate_usage(response)
         search_text = response.choices[0].message.content or ""
         if response.choices[0].message.tool_calls:
             msgs.append({"role": "assistant", "tool_calls": [tc.model_dump() for tc in response.choices[0].message.tool_calls]})
@@ -132,6 +143,7 @@ class PPTBuilderAgent(BaseAgent):
             final = await self.llm_client.chat.completions.create(
                 model=self.model, messages=msgs, temperature=0.7,
             )
+            self._accumulate_usage(final)
             search_text = final.choices[0].message.content or ""
         yield self.text_response("✅ 信息收集完成\n")
         await ppt_svc.update_search_info(ppt_inst.id, search_text)
@@ -145,6 +157,7 @@ class PPTBuilderAgent(BaseAgent):
             {"role": "user", "content": "请选择模板"},
         ]
         response = await self.llm_client.chat.completions.create(model=self.model, messages=msgs, temperature=0.7)
+        self._accumulate_usage(response)
         try:
             template_code = json.loads(response.choices[0].message.content or "{}").get("templateCode", "ai")
         except json.JSONDecodeError:
@@ -161,6 +174,7 @@ class PPTBuilderAgent(BaseAgent):
         tpl_name = template.template_name if template else ""
         msgs = [{"role": "system", "content": get_outline_prompt(requirement, tpl_schema, tpl_name, search_text)}]
         response = await self.llm_client.chat.completions.create(model=self.model, messages=msgs, temperature=0.7)
+        self._accumulate_usage(response)
         outline = response.choices[0].message.content or ""
         yield self.text_response("✅ 大纲生成完成\n")
         await ppt_svc.update_outline(ppt_inst.id, outline)
@@ -169,6 +183,7 @@ class PPTBuilderAgent(BaseAgent):
         yield self.text_response("\n📐 正在生成PPT Schema...\n")
         msgs = [{"role": "system", "content": get_schema_generation_prompt(tpl_schema, outline)}]
         response = await self.llm_client.chat.completions.create(model=self.model, messages=msgs, temperature=0.7)
+        self._accumulate_usage(response)
         schema_text = response.choices[0].message.content or ""
         yield self.text_response("✅ Schema生成完成\n")
         await ppt_svc.update_schema(ppt_inst.id, schema_text)
@@ -200,15 +215,27 @@ class PPTBuilderAgent(BaseAgent):
         msgs = [{"role": "system", "content": prompt}]
         stream = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, temperature=0.7, stream=True,
+            stream_options={"include_usage": True},  # 启用 usage 提取
         )
         summary_buffer = ""
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
+            if delta is None:
+                # 检查是否是最后一个带 usage 的 chunk
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    self._total_usage["prompt_tokens"] += getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                    self._total_usage["completion_tokens"] += getattr(chunk.usage, 'completion_tokens', 0) or 0
+                    self._total_usage["total_tokens"] += getattr(chunk.usage, 'total_tokens', 0) or 0
+                    self._total_usage["call_count"] += 1
+                continue
+            if delta.content:
                 summary_buffer += delta.content
                 yield self.text_response(delta.content)
 
         await self._save_answer(summary_buffer, "")
+
+        # 发送汇总 usage 事件
+        yield self.usage_response(model_name=self.model, provider="openai_compatible")
 
     async def _run_tool(self, tool_name: str, args: dict) -> str:
         try:

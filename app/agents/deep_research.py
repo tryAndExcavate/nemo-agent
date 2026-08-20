@@ -2,7 +2,7 @@ import json
 import logging
 import asyncio
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIConnectionError
 from app.agents.base import BaseAgent
 from app.prompts.plan_execute import (
     get_current_time, PLAN, EXECUTE, CRITIQUE, COMPRESS, SUMMARIZE,
@@ -29,7 +29,7 @@ class PlanExecuteAgent(BaseAgent):
     async def stream(self, conversation_id: str, question: str) -> AsyncGenerator[str, None]:
         task_info = await task_manager.register_task(conversation_id, "deep")
         if task_info is None and await task_manager.has_running_task(conversation_id):
-            yield BaseAgent.error_response("该会话正在执行中，请稍后再试")
+            yield BaseAgent.error_response("已有任务正在执行中，请稍后再试")
             return
 
         self.init_timers()
@@ -47,79 +47,85 @@ class PlanExecuteAgent(BaseAgent):
             ))
             self.current_session_id = saved.id
 
-        final_answer: list[str] = []
-        thinking: list[str] = []
-        all_references: list[dict] = []
-        messages: list[dict] = []
-        research_topic: str = ""
+        try:
+            final_answer: list[str] = []
+            thinking: list[str] = []
+            all_references: list[dict] = []
+            messages: list[dict] = []
+            research_topic: str = ""
 
-        def check_cancel():
-            return task_info and task_info.cancel_event.is_set()
+            def check_cancel():
+                return task_info and task_info.cancel_event.is_set()
 
-        # Phase 1: Clarify requirement
-        yield self.thinking_response("\n🔍 正在分析您的需求...\n")
-        clarify_result = await self._clarify_requirement(question, check_cancel)
-        thinking.append(clarify_result)
-        if check_cancel():
-            yield BaseAgent.stop_message(); return
-        if "【需要补充信息】" in clarify_result:
-            yield self.text_response(f"⏸【暂停深入研究】{clarify_result.replace('【需要补充信息】', '').strip()}")
-            await task_manager.stop_task(conversation_id); return
-        yield self.thinking_response("✅ 信息充足，准备生成研究主题\n")
+            # Phase 1: Clarify requirement
+            yield self.thinking_response("\n🔍 正在分析您的需求...\n")
+            clarify_result = await self._clarify_requirement(question, check_cancel)
+            thinking.append(clarify_result)
+            if check_cancel():
+                yield BaseAgent.stop_message(); return
+            if "【需要补充信息】" in clarify_result:
+                yield self.text_response(f"⏸【暂停深入研究】{clarify_result.replace('【需要补充信息】', '').strip()}")
+                return
+            yield self.thinking_response("✅ 信息充足，准备生成研究主题\n")
 
-        # Phase 2: Generate research topic
-        yield self.thinking_response("📝 正在生成研究主题...\n")
-        research_topic = await self._generate_topic(question, check_cancel)
-        thinking.append(research_topic)
-        yield self.thinking_response("\n✅ 研究主题已生成\n\n")
-        if check_cancel():
-            yield BaseAgent.stop_message(); return
-
-        # Phase 3: Plan-Execute-Critique loop
-        for round_num in range(1, self.max_rounds + 1):
-            yield self.thinking_response(f"\n🔄 第 {round_num} 轮研究开始\n")
+            # Phase 2: Generate research topic
+            yield self.thinking_response("📝 正在生成研究主题...\n")
+            research_topic = await self._generate_topic(question, check_cancel)
+            thinking.append(research_topic)
+            yield self.thinking_response("\n✅ 研究主题已生成\n\n")
             if check_cancel():
                 yield BaseAgent.stop_message(); return
 
-            # Plan
-            yield self.thinking_response("📋 正在生成执行计划...\n")
-            plan = await self._generate_plan(question, research_topic, messages, check_cancel)
-            if plan is None or all(t.get("id") is None for t in plan):
-                break
-            yield self.thinking_response(f"\n✅ 执行计划已生成，共 {len(plan)} 个任务\n")
-            if check_cancel():
-                yield BaseAgent.stop_message(); return
+            # Phase 3: Plan-Execute-Critique loop
+            for round_num in range(1, self.max_rounds + 1):
+                yield self.thinking_response(f"\n🔄 第 {round_num} 轮研究开始\n")
+                if check_cancel():
+                    yield BaseAgent.stop_message(); return
 
-            # Execute
-            yield self.thinking_response("\n--- 开始执行任务 ---\n\n")
-            results = await self._execute_plan(plan, check_cancel, thinking, all_references)
-            yield self.thinking_response("\n--- 任务执行完成 ---\n\n")
-            if check_cancel():
-                yield BaseAgent.stop_message(); return
+                # Plan
+                yield self.thinking_response("📋 正在生成执行计划...\n")
+                plan = await self._generate_plan(question, research_topic, messages, check_cancel)
+                if plan is None or all(t.get("id") is None for t in plan):
+                    break
+                yield self.thinking_response(f"\n✅ 执行计划已生成，共 {len(plan)} 个任务\n")
+                if check_cancel():
+                    yield BaseAgent.stop_message(); return
 
-            # Critique
-            yield self.thinking_response("\n🔍 正在评估当前研究结果...\n")
-            critique = await self._critique(question, research_topic, plan, results, check_cancel)
-            if critique.get("passed"):
-                yield self.thinking_response("\n✅ 研究结果评估通过，准备生成最终报告\n")
-                break
-            else:
-                yield self.thinking_response(f"\n⚠️ 研究结果评估未通过，原因分析：{critique.get('feedback', '')}\n")
-                messages.append({"role": "assistant", "content": f"【Critique Feedback】\n{critique.get('feedback', '')}"})
+                # Execute
+                yield self.thinking_response("\n--- 开始执行任务 ---\n\n")
+                results = await self._execute_plan(plan, check_cancel, thinking, all_references)
+                yield self.thinking_response("\n--- 任务执行完成 ---\n\n")
+                if check_cancel():
+                    yield BaseAgent.stop_message(); return
 
-        # Phase 4: Summarize
-        yield self.thinking_response("\n✅ 研究阶段完成，准备生成最终报告\n\n")
-        yield self.thinking_response("\n📝 正在生成最终研究报告...\n\n")
+                # Critique
+                yield self.thinking_response("\n🔍 正在评估当前研究结果...\n")
+                critique = await self._critique(question, research_topic, plan, results, check_cancel)
+                if critique.get("passed"):
+                    yield self.thinking_response("\n✅ 研究结果评估通过，准备生成最终报告\n")
+                    break
+                else:
+                    yield self.thinking_response(f"\n⚠️ 研究结果评估未通过，原因分析：{critique.get('feedback', '')}\n")
+                    messages.append({"role": "assistant", "content": f"【Critique Feedback】\n{critique.get('feedback', '')}"})
 
-        final_text = await self._summarize(question, research_topic, messages, check_cancel, all_references)
-        final_answer.append(final_text)
-        yield self.text_response(final_text)
+            # Phase 4: Summarize
+            yield self.thinking_response("\n✅ 研究阶段完成，准备生成最终报告\n\n")
+            yield self.thinking_response("\n📝 正在生成最终研究报告...\n\n")
 
-        if all_references:
-            yield self.reference_response(json.dumps(all_references, ensure_ascii=False))
+            final_text = await self._summarize(question, research_topic, messages, check_cancel, all_references)
+            final_answer.append(final_text)
+            yield self.text_response(final_text)
 
-        await self._save_session(conversation_id, "".join(final_answer), "".join(thinking), all_references)
-        await task_manager.stop_task(conversation_id)
+            if all_references:
+                yield self.reference_response(json.dumps(all_references, ensure_ascii=False))
+
+            await self._save_session(conversation_id, "".join(final_answer), "".join(thinking), all_references)
+            yield self.usage_response(model_name=self.model, provider="openai_compatible")
+        except Exception as e:
+            logger.error(f"Agent 执行异常: {e}")
+            yield self.error_response(f"执行出错: {e}")
+        finally:
+            await task_manager.stop_task(conversation_id)
 
     async def _clarify_requirement(self, question: str, check_cancel) -> str:
         msgs = [
@@ -129,6 +135,7 @@ class PlanExecuteAgent(BaseAgent):
         response = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, temperature=0.7,
         )
+        self._accumulate_usage(response)
         return response.choices[0].message.content or ""
 
     async def _generate_topic(self, question: str, check_cancel) -> str:
@@ -139,6 +146,7 @@ class PlanExecuteAgent(BaseAgent):
         response = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, temperature=0.7,
         )
+        self._accumulate_usage(response)
         return response.choices[0].message.content or ""
 
     async def _generate_plan(self, question: str, topic: str, context: list[dict], check_cancel) -> list[dict] | None:
@@ -149,6 +157,7 @@ class PlanExecuteAgent(BaseAgent):
         response = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, temperature=0.7,
         )
+        self._accumulate_usage(response)
         text = response.choices[0].message.content or ""
         # Try to parse JSON
         try:
@@ -200,6 +209,7 @@ class PlanExecuteAgent(BaseAgent):
                 model=self.model, messages=msgs, tools=self.tools,
                 temperature=0.7,
             )
+            self._accumulate_usage(response)
             if response.choices[0].message.tool_calls:
                 for tc in response.choices[0].message.tool_calls:
                     result = await self._execute_tool(tc.function.name, json.loads(tc.function.arguments))
@@ -210,6 +220,7 @@ class PlanExecuteAgent(BaseAgent):
                 final_response = await self.llm_client.chat.completions.create(
                     model=self.model, messages=msgs, temperature=0.7,
                 )
+                self._accumulate_usage(final_response)
                 answer = final_response.choices[0].message.content or ""
             else:
                 answer = response.choices[0].message.content or ""
@@ -229,6 +240,7 @@ class PlanExecuteAgent(BaseAgent):
         response = await self.llm_client.chat.completions.create(
             model=self.model, messages=msgs, temperature=0.7,
         )
+        self._accumulate_usage(response)
         text = response.choices[0].message.content or ""
         try:
             cleaned = ThinkTagParser.strip_think_tags(text)
@@ -245,9 +257,14 @@ class PlanExecuteAgent(BaseAgent):
             {"role": "system", "content": f"{get_current_time()}\n\n{SUMMARIZE}"},
             {"role": "user", "content": f"【用户原始问题】\n{question}\n\n【研究主题】\n{topic}"},
         ]
-        response = await self.llm_client.chat.completions.create(
-            model=self.model, messages=msgs, temperature=0.7,
-        )
+        try:
+            response = await self.llm_client.chat.completions.create(
+                model=self.model, messages=msgs, temperature=0.7,
+            )
+        except APIConnectionError as e:
+            # 代理/网络断开，返回错误信息，不要直接抛异常到上层
+            raise RuntimeError("大模型服务连接失败，请检查网络代理或稍后重试") from e
+        self._accumulate_usage(response)
         return response.choices[0].message.content or ""
 
     async def _execute_tool(self, tool_name: str, args: dict) -> str:

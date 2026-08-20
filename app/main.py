@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from app.config import settings
-from app.api import agent, file, session, models, base, chat
+from app.api import agent, file, session, models, base, chat, conversations
 from app.services.task_manager import task_manager
 from app.utils.http_client import close_http_client
 
@@ -24,6 +24,15 @@ logger.info(f"index.html exists: {(STATIC_DIR / 'index.html').exists()}")
 async def lifespan(app: FastAPI):
     logger.info("Starting dodo-agent API server...")
     await task_manager.start()
+
+    # 初始化数据库，创建所有表（包括 context_summaries）
+    from app.database import init_db
+    try:
+        await init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+
     logger.info(f"Server port: {settings.server_port}")
     logger.info(f"API docs: http://localhost:{settings.server_port}/docs")
     yield
@@ -54,6 +63,7 @@ app.include_router(session.router)
 app.include_router(models.router)
 app.include_router(base.router)
 app.include_router(chat.router)
+app.include_router(conversations.router)
 
 
 # ===== 静态文件路由（纯 @app.get 方式，不用 mount） =====

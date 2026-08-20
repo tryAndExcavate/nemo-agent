@@ -31,6 +31,7 @@ const STREAM_TYPES = {
     REFERENCE: 'reference',
     RECOMMEND: 'recommend',
     ERROR: 'error',
+    USAGE: 'usage',           // 新增：Token 消耗统计事件
     COMPLETE: 'complete',
     DONE: '[DONE]'
 };

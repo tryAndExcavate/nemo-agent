@@ -24,7 +24,7 @@ class WebSearchReActAgent(BaseAgent):
         print("在此处A")
         task_info = await task_manager.register_task(conversation_id, "websearch")
         if task_info is None and await task_manager.has_running_task(conversation_id):
-            yield BaseAgent.error_response("该会话正在执行中，请稍后再试")
+            yield BaseAgent.error_response("该会话中存在正在执行的任务，请稍后再试")
             return
 
         self.init_timers()
@@ -41,17 +41,15 @@ class WebSearchReActAgent(BaseAgent):
             await self._save_question(conversation_id, question)
             svc = SessionService(db)
 
-            messages: list[dict] = [
-                {"role": "system", "content": get_web_search_prompt()},
-            ]
-            history = await svc.find_recent_by_session_id(conversation_id, 30)
-            for record in reversed(history):
-                if record.question:
-                    messages.append({"role": "user", "content": record.question})
-                if record.answer:
-                    messages.append({"role": "assistant", "content": record.answer})
-
-            messages.append({"role": "user", "content": f"<question>{question}</question>"})
+            # 使用上下文压缩器智能管理历史消息
+            system_prompt = get_web_search_prompt()
+            compressed = await self.context_compressor.compress(
+                conversation_id=conversation_id,
+                system_prompt=system_prompt,
+                current_input=f"<question>{question}</question>",
+                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000}
+            )
+            messages = compressed.messages
 
             final_answer: list[str] = []
             thinking_buffer: list[str] = []
@@ -74,6 +72,7 @@ class WebSearchReActAgent(BaseAgent):
                     stream = await self.llm_client.chat.completions.create(
                         model=self.model, messages=messages, tools=self.tools,
                         temperature=0.7, stream=True,
+                        stream_options={"include_usage": True},  # 启用 usage 提取
                     )
                     async for chunk in stream:
                         if task_info and task_info.cancel_event.is_set():
@@ -81,6 +80,12 @@ class WebSearchReActAgent(BaseAgent):
                             return
                         delta = chunk.choices[0].delta if chunk.choices else None
                         if delta is None:
+                            # 检查是否是最后一个带 usage 的 chunk
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                self._total_usage["prompt_tokens"] = getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                                self._total_usage["completion_tokens"] = getattr(chunk.usage, 'completion_tokens', 0) or 0
+                                self._total_usage["total_tokens"] = getattr(chunk.usage, 'total_tokens', 0) or 0
+                                self._total_usage["call_count"] += 1
                             continue
                         if delta.tool_calls:
                             for tc_delta in delta.tool_calls:
@@ -164,10 +169,13 @@ class WebSearchReActAgent(BaseAgent):
 
             # 保存结果
             await self._save_answer("".join(final_answer), "".join(thinking_buffer), all_references)
+            yield self.usage_response(model_name=self.model, provider="openai_compatible")
+        except Exception as e:
+            logger.error(f"Agent 执行异常: {e}")
+            yield self.error_response(f"执行出错: {e}")
         finally:
             await self._close_db()
-
-        await task_manager.stop_task(conversation_id)
+            await task_manager.stop_task(conversation_id)
 
     async def _execute_tool(self, tool_name: str, args: dict) -> tuple[str, list[dict]]:
         """执行工具，返回 (tool_response_text, references_list)"""
