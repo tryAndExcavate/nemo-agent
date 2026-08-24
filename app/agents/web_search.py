@@ -20,7 +20,7 @@ class WebSearchReActAgent(BaseAgent):
         self.tools = tools
         self.max_rounds = max_rounds
 
-    async def stream(self, conversation_id: str, question: str) -> AsyncGenerator[str, None]:
+    async def stream(self, conversation_id: str, question: str, until_message_id: int | None = None, regenerate_from_id: str | None = None) -> AsyncGenerator[str, None]:
         print("在此处A")
         task_info = await task_manager.register_task(conversation_id, "websearch")
         if task_info is None and await task_manager.has_running_task(conversation_id):
@@ -33,6 +33,19 @@ class WebSearchReActAgent(BaseAgent):
         self.current_question = question
 
         db = self._new_db()
+
+        # 重新生成模式：清空旧回复，复用已有记录
+        if regenerate_from_id:
+            from sqlalchemy import update
+            from app.models.session import AiSession
+            regen_id = int(regenerate_from_id)
+            stmt = update(AiSession).where(AiSession.id == regen_id).values(
+                answer=None, thinking=None, tools=None, reference=None, recommend=None,
+                first_response_time=None, total_response_time=None,
+            )
+            await db.execute(stmt)
+            await db.commit()
+            self._regenerate_record_id = regen_id
 
         # 收集搜索结果，最后统一发给前端
         all_references: list[dict] = []
@@ -47,7 +60,8 @@ class WebSearchReActAgent(BaseAgent):
                 conversation_id=conversation_id,
                 system_prompt=system_prompt,
                 current_input=f"<question>{question}</question>",
-                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000}
+                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000},
+                until_message_id=until_message_id,  # 新增：支持指定历史截止点
             )
             messages = compressed.messages
 

@@ -37,11 +37,17 @@ const renderMarkdown = (content) => {
         .replace(/\\r\\n/g, '\n')
         .replace(/\\r/g, '\n');
 
-    const html = marked.parse(processedContent);
+    let html = marked.parse(processedContent);
 
     if (typeof DOMPurify !== 'undefined') {
-        return DOMPurify.sanitize(html);
+        html = DOMPurify.sanitize(html);
     }
+
+    // 给 <pre> 代码块包裹容器 + 复制按钮
+    html = html.replace(/<pre>([\s\S]*?)<\/pre>/g, (match, inner) => {
+        return `<div class="code-block-wrap"><pre>${inner}</pre><button class="copy-code-btn" onclick="window.__copyCode(this)">复制</button></div>`;
+    });
+
     return html;
 };
 
@@ -117,4 +123,16 @@ window.APP_UTILS = {
     renderMarkdown,
     processReferences,
     processRecommendations
+};
+
+// 代码块复制按钮点击处理
+window.__copyCode = function(btn) {
+    const pre = btn.parentElement.querySelector('pre');
+    if (!pre) return;
+    const code = pre.textContent;
+    navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = '已复制';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+    });
 };

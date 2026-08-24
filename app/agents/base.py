@@ -39,6 +39,9 @@ class BaseAgent:
             "call_count": 0,
         }
 
+        # 重新生成模式：记录已有 ai_session 的 id，跳过 _save_question，复用该记录
+        self._regenerate_record_id: int | None = None
+
         # 上下文压缩器（懒加载）
         self._context_compressor = None
 
@@ -93,13 +96,25 @@ class BaseAgent:
             self._db = None
 
     async def _save_question(self, conversation_id: str, question: str, fileid: str | None = None):
+        if self._regenerate_record_id:
+            # 重新生成模式：复用已有记录，跳过插入新行
+            self.current_session_id = self._regenerate_record_id
+            return
         from app.services.session import SessionService
+        from app.models.conversation import Conversation
+        from sqlalchemy import update
         db = self._new_db()
         svc = SessionService(db)
         saved = await svc.save_question(SaveQuestionRequest(
             session_id=conversation_id, question=question, fileid=fileid,
         ))
         self.current_session_id = saved.id
+        # 同步更新 conversations 表的 active_head_id
+        stmt = update(Conversation).where(
+            Conversation.session_id == conversation_id
+        ).values(active_head_id=saved.id)
+        await db.execute(stmt)
+        await db.commit()
 
     async def _save_answer(self, answer: str, thinking: str, references: list | None = None):
         if not self.current_session_id:

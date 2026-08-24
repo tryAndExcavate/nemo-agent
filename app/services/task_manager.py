@@ -53,6 +53,11 @@ class TaskManager:
             self._pubsub = self._redis.pubsub()
             await self._pubsub.subscribe(**{STOP_TOPIC_NAME: self._handle_stop_message})
             self._refresh_task = asyncio.create_task(self._refresh_loop())
+            # 清理所有残留的 task key（防止重启后旧 key 阻塞新实例）
+            stale_keys = await self._redis.keys(f"{TASK_KEY_PREFIX}*")
+            if stale_keys:
+                await self._redis.delete(*stale_keys)
+                logger.info(f"Cleaned {len(stale_keys)} stale task keys on startup")
             logger.info(f"TaskManager started with Redis, instanceId={self._instance_id}")
         except Exception as e:
             logger.warning(f"Redis 不可用，降级为本地模式: {e}")

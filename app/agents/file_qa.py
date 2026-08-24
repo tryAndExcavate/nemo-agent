@@ -23,7 +23,7 @@ class FileReActAgent(BaseAgent):
         self.max_rounds = max_rounds
         self.current_file_id: str | None = None
 
-    async def stream(self, conversation_id: str, question: str, file_id: str) -> AsyncGenerator[str, None]:
+    async def stream(self, conversation_id: str, question: str, file_id: str, until_message_id: int | None = None) -> AsyncGenerator[str, None]:
         self.current_file_id = file_id
 
         task_info = await task_manager.register_task(conversation_id, "file")
@@ -61,7 +61,8 @@ class FileReActAgent(BaseAgent):
                 conversation_id=conversation_id,
                 system_prompt=system_prompt,
                 current_input=user_msg.get("content", ""),
-                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000}
+                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000},
+                until_message_id=until_message_id,  # 新增：支持指定历史截止点
             )
             messages = compressed.messages
             messages.append(user_msg)

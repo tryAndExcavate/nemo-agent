@@ -3,7 +3,9 @@
   "configurations": [
     {
       "name": "dodo-agent",
-      "url": "http://localhost:8899/blueprint.html"
+      "runtimeExecutable": "C:\\Users\\000\\miniconda3\\envs\\agent_env\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8899", "--reload"],
+      "port": 8899
     }
   ]
 }

@@ -68,7 +68,7 @@ async def get_session(conversation_id: str, db: AsyncSession = Depends(get_db)):
         messages = []
         for s in sessions:
             messages.append({
-                "id": s.id,
+                "id": str(s.id),  # 雪花ID超出JS安全整数，必须转字符串
                 "question": s.question,
                 "answer": s.answer,
                 "thinking": s.thinking,

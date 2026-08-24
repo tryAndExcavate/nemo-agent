@@ -1,7 +1,7 @@
 """会话 ORM 模型。"""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, DateTime, func, Index
+from sqlalchemy import String, BigInteger, DateTime, func, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -15,6 +15,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="新对话")
     agent_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="false")  # true=最后活跃, false=非活跃
+    active_head_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, comment="激活分支的最新消息ID")
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

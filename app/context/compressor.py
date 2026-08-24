@@ -42,6 +42,7 @@ class ContextCompressor:
         system_prompt: str,
         current_input: str,
         model_config: dict,
+        until_message_id: Optional[int] = None,
     ) -> CompressedContext:
         """压缩上下文，返回压缩后的消息列表。
 
@@ -50,13 +51,14 @@ class ContextCompressor:
             system_prompt: 系统提示
             current_input: 当前用户输入
             model_config: 模型配置
+            until_message_id: 指定历史截止点（编辑/重新生成时使用）
 
         Returns:
             CompressedContext: 压缩后的上下文
         """
         provider = model_config.get("provider", "openai")
 
-        history = await self._load_history(conversation_id)
+        history = await self._load_history(conversation_id, until_message_id)
         existing_summary = await self._load_summary(conversation_id)
 
         trigger_result = self.trigger.check(
@@ -200,20 +202,42 @@ class ContextCompressor:
             logger.error(f"摘要生成失败，降级返回旧摘要或空: {e}")
             return old_summary or "（摘要生成失败，早期对话内容暂不可用）"
 
-    async def _load_history(self, conversation_id: str) -> List[Dict]:
-        """加载历史消息。"""
+    async def _load_history(
+        self,
+        conversation_id: str,
+        until_message_id: Optional[int] = None
+    ) -> List[Dict]:
+        """
+        加载历史消息
+
+        新增：支持指定until_message_id，只加载到该消息为止的历史
+        用于编辑/重新生成时，基于特定消息的历史重建上下文
+        """
         from app.services.session import SessionService
         from app.database import async_session_factory
         async with async_session_factory() as session:
-            svc = SessionService(session)
-            records = await svc.find_recent_by_session_id(conversation_id, 100)
-            history = []
-            for record in reversed(records):
-                if record.question:
-                    history.append({"id": record.id, "role": "user", "content": record.question})
-                if record.answer:
-                    history.append({"id": record.id + 0.5, "role": "assistant", "content": record.answer})
-            return history
+            if until_message_id:
+                # 新逻辑：沿着激活分支加载到指定消息
+                from app.repositories.message_tree_repo import MessageTreeRepository
+                tree_repo = MessageTreeRepository(session)
+                history = await tree_repo.get_history_for_context(
+                    conversation_id,
+                    until_message_id
+                )
+                return history
+            else:
+                # 原有逻辑：加载所有激活分支消息
+                svc = SessionService(session)
+                records = await svc.find_recent_by_session_id(conversation_id, 100)
+                history = []
+                for record in reversed(records):
+                    # 新增：只加载激活分支
+                    if record.is_active_branch:
+                        if record.question:
+                            history.append({"id": record.id, "role": "user", "content": record.question})
+                        if record.answer:
+                            history.append({"id": record.id + 0.5, "role": "assistant", "content": record.answer})
+                return history
 
     async def _load_summary(self, conversation_id: str) -> Optional[Dict]:
         """加载现有摘要。"""

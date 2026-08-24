@@ -156,3 +156,37 @@ class Slide(BaseModel):
 
 class PptSchema(BaseModel):
     slides: list[Slide]
+
+
+# --- 分支管理 Request/Response schemas ---
+
+class EditMessageRequest(BaseModel):
+    """编辑用户消息请求"""
+    message_id: str  # 雪花ID用字符串传递，避免JS精度丢失
+    new_question: str
+    create_branch: bool = True  # True=分支重新回复, False=不分支重新回复
+
+
+class RegenerateRequest(BaseModel):
+    """重新生成AI回复请求"""
+    message_id: str  # 雪花ID用字符串
+
+
+class SwitchBranchRequest(BaseModel):
+    """切换分支请求"""
+    target_branch_id: str  # 雪花ID用字符串
+
+
+class BranchResponse(BaseModel):
+    """分支响应"""
+    branch_id: str  # 雪花ID用字符串
+    parent_id: Optional[str] = None  # NULL=根节点
+    branch_order: int = 1
+    is_active: bool = True
+    history: list[dict] = []
+    active_head_id: Optional[str] = None
+
+
+class SiblingsResponse(BaseModel):
+    """兄弟分支响应"""
+    siblings: list[BranchResponse]

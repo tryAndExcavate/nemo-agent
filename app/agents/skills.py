@@ -24,7 +24,7 @@ class SkillsReActAgent(BaseAgent):
         self.max_retries = max_retries
         self.context_compactor = context_compactor
 
-    async def stream(self, conversation_id: str, question: str, file_id: str | None = None) -> AsyncGenerator[str, None]:
+    async def stream(self, conversation_id: str, question: str, file_id: str | None = None, until_message_id: int | None = None) -> AsyncGenerator[str, None]:
         task_info = await task_manager.register_task(conversation_id, "skills")
         if task_info is None and await task_manager.has_running_task(conversation_id):
             yield BaseAgent.error_response("该会话正在执行中，请稍后再试")
@@ -55,7 +55,8 @@ class SkillsReActAgent(BaseAgent):
                 conversation_id=conversation_id,
                 system_prompt=system_prompt,
                 current_input=current_input,
-                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000}
+                model_config={"provider": "openai", "max_context_window": 8000, "reserve_for_reply": 1000},
+                until_message_id=until_message_id,  # 新增：支持指定历史截止点
             )
             messages = compressed.messages
 

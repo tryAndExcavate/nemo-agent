@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>豆豆</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=10">
     <!-- Vue 3 CDN -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- Marked.js for Markdown rendering -->
@@ -110,6 +110,9 @@
                 </div>
             </div>
 
+            <!-- 侧边栏拖拽调整宽度手柄 -->
+            <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
+
             <!-- 右侧聊天区域 -->
             <div class="main-content">
                 <!-- 顶部装饰 -->
@@ -153,7 +156,7 @@
                                     <i class="fas fa-paperclip"></i>
                                     {{ msg.fileName }}
                                 </span>
-                                <div>{{ msg.content }}</div>
+                                <div v-if="editingMessageId !== msg.id">{{ msg.content }}</div>
                             </div>
 
                             <!-- Copy 按钮 -->
@@ -162,8 +165,36 @@
                                 <i v-else class="fas fa-check"></i>
                             </div>
 
+                            <!-- 用户消息操作按钮 -->
+                            <div v-if="msg.role === 'user'" class="message-actions">
+                                <button class="action-btn edit-btn"
+                                        @click="startEditMessage(msg.id, msg.content)"
+                                        title="编辑消息">
+                                    <i class="fas fa-edit"></i> 编辑
+                                </button>
+                            </div>
+
+                            <!-- 编辑表单 -->
+                            <div v-if="editingMessageId === msg.id" class="edit-form">
+                                <textarea v-model="editText" class="edit-textarea"></textarea>
+                                <div class="edit-mode-select">
+                                    <label>
+                                        <input type="radio" v-model="createBranch" :value="true">
+                                        分支重新回复（保留原消息）
+                                    </label>
+                                    <label>
+                                        <input type="radio" v-model="createBranch" :value="false">
+                                        不分支重新回复（覆盖原消息）
+                                    </label>
+                                </div>
+                                <div class="edit-actions">
+                                    <button @click="submitEdit" class="save-btn">保存并重新生成</button>
+                                    <button @click="cancelEditMessage" class="cancel-btn">取消</button>
+                                </div>
+                            </div>
+
                             <!-- AI 消息 -->
-                            <div v-else class="ai-message">
+                            <div v-if="msg.role !== 'user'" class="ai-message">
                                 <!-- 思考过程（思考+工具调用统一时间线） -->
                                 <div v-if="msg.timeline && msg.timeline.length > 0" class="timeline-section">
                                     <div class="timeline-header" @click="toggleTimeline(msg.id)">
@@ -284,6 +315,15 @@
                                 <div class="copy-btn" @click="copyMessage(msg)">
                                     <i v-if="!msg.copied" class="fas fa-copy"></i>
                                     <i v-else class="fas fa-check"></i>
+                                </div>
+
+                                <!-- 重新生成按钮 -->
+                                <div class="message-actions" style="display: flex; opacity: 1;">
+                                    <button class="action-btn regenerate-btn"
+                                            @click="regenerateMessage(msg.id)"
+                                            title="重新生成">
+                                        <i class="fas fa-redo"></i> 重新生成
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -407,11 +447,11 @@
     </div>
 
     <!-- 配置和工具模块 -->
-    <script src="js/config.js"></script>
-    <script src="js/constants.js"></script>
-    <script src="js/utils.js"></script>
-    <script src="js/api.js"></script>
+    <script src="js/config.js?v=5"></script>
+    <script src="js/constants.js?v=5"></script>
+    <script src="js/utils.js?v=9"></script>
+    <script src="js/api.js?v=5"></script>
     <!-- 主应用 -->
-    <script src="js/app.js"></script>
+    <script src="js/app.js?v=13"></script>
 </body>
 </html>

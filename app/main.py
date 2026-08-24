@@ -7,8 +7,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from app.config import settings
-from app.api import agent, file, session, models, base, chat, conversations
+from app.api import agent, file, session, models, base, chat, conversations, branches
 from app.services.task_manager import task_manager
+from app.services.stream_manager import init_stream_manager
 from app.utils.http_client import close_http_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -25,6 +26,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting dodo-agent API server...")
     await task_manager.start()
 
+    # 初始化 Redis Stream 管理器
+    sm = init_stream_manager(settings.redis_url)
+    await sm.start()
+
     # 初始化数据库，创建所有表（包括 context_summaries）
     from app.database import init_db
     try:
@@ -37,6 +42,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"API docs: http://localhost:{settings.server_port}/docs")
     yield
     logger.info("Shutting down...")
+    from app.services.stream_manager import get_stream_manager
+    sm = get_stream_manager()
+    if sm:
+        await sm.close()
     await task_manager.stop()
     await close_http_client()
 
@@ -64,6 +73,7 @@ app.include_router(models.router)
 app.include_router(base.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
+app.include_router(branches.router)
 
 
 # ===== 静态文件路由（纯 @app.get 方式，不用 mount） =====
