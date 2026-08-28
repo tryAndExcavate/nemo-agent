@@ -36,6 +36,7 @@ createApp({
         const editText = ref('');             // 编辑文本
         const createBranch = ref(true);       // 是否创建分支（默认是）
         const branchCache = new Map();        // 缓存兄弟分支信息
+        const showAccordion = ref(false);     // 是否显示手风琴分支视图
 
         const messagesContainer = ref(null);
         const textareaInput = ref(null);
@@ -82,6 +83,12 @@ createApp({
                     }
                 });
             }
+
+            // ===== 分支标签拖拽删除（全局监听） =====
+            document.addEventListener('mousemove', onDragTab);
+            document.addEventListener('mouseup', endDragTab);
+            document.addEventListener('touchmove', onDragTab, { passive: false });
+            document.addEventListener('touchend', endDragTab);
         });
 
         const { generateId, formatFileSize, renderMarkdown, processReferences, processRecommendations } = APP_UTILS;
@@ -96,7 +103,7 @@ createApp({
         };
 
         // ===== 选中会话 =====
-        const selectChat = async (chatId) => {
+        const selectChat = async (chatId, opts = {}) => {
             currentChatId.value = chatId;
             const chat = chatList.value.find(c => c.id === chatId);
             if (!chat) return;
@@ -118,10 +125,25 @@ createApp({
             if (!detail) return;
 
             chat.messages = buildMessages(detail);
+
+            // 判断是否有分支 → 树视图（手风琴替换分支轮次）
+            const tree = buildTree(detail.messages);
+            if (tree && hasBranches(tree)) {
+                showAccordion.value = true;
+                accordionResetFns.length = 0;
+                const treeEl = document.getElementById('messageTree');
+                if (treeEl) renderMessageTree(tree, treeEl);
+            } else {
+                showAccordion.value = false;
+            }
+
             scrollToBottom();
 
             // 检查是否有活跃的 SSE 流，如有则重连（刷新页面后恢复流式回复）
-            checkAndReconnectStream(chatId, chat);
+            // skipReconnect: 编辑/重新生成流程传入 true，避免与自身 SSE 流冲突
+            if (!opts.skipReconnect) {
+                checkAndReconnectStream(chatId, chat);
+            }
         };
 
         let isReconnecting = false;  // 防止 reconnect → selectChat → reconnect 无限循环
@@ -247,6 +269,774 @@ createApp({
             return msgs;
         }
 
+        // ===== 树形结构：flat → tree =====
+        function buildTree(messages) {
+            if (!messages || !Array.isArray(messages) || !messages.length) return null;
+            const byId = new Map();
+            messages.forEach(m => byId.set(m.id, { ...m, children: [] }));
+            let root = null;
+            byId.forEach(node => {
+                if (node.parent_id == null) { root = node; return; }
+                const parent = byId.get(String(node.parent_id));
+                if (parent) { node.parentNode = parent; parent.children.push(node); }
+            });
+            byId.forEach(n => n.children.sort((a, b) => (a.branch_order || 0) - (b.branch_order || 0)));
+            return root;
+        }
+
+        function hasBranches(node) {
+            if (!node) return false;
+            if (node.children && node.children.length > 1) return true;
+            return (node.children || []).some(c => hasBranches(c));
+        }
+
+        // ===== 树视图渲染：手风琴替换分支轮次 =====
+        const DEPTH_COLORS = ['#8b5cf6', '#10b981', '#f59e0b', '#a855f7', '#ef4444'];
+        const accordionResetFns = [];
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // 渲染单个节点的 Q&A 气泡
+        function renderNodeBubbles(node, container) {
+            if (node.question) {
+                const div = document.createElement('div');
+                div.className = 'message user';
+                div.dataset.nodeId = String(node.id);
+                div.innerHTML =
+                    '<div class="message-avatar">👤</div>' +
+                    '<div class="message-content"><div class="user-message"><div>' + escapeHtml(node.question) + '</div></div></div>';
+                container.appendChild(div);
+            }
+            if (node.answer || node.thinking) {
+                const div = document.createElement('div');
+                div.className = 'message assistant';
+                div.dataset.nodeId = String(node.id);
+                let inner = '';
+                if (node.thinking) {
+                    inner += '<div class="timeline-section"><div class="timeline-header"><div class="timeline-icon-wrapper"><i class="fas fa-brain timeline-main-icon"></i></div><span class="timeline-title">思考过程</span></div><div class="timeline-content"><div class="timeline-item"><div class="timeline-dot thinking"></div><div class="timeline-item-body"><div class="timeline-thinking">' + escapeHtml(node.thinking) + '</div></div></div></div></div>';
+                }
+                inner += '<div class="text-content markdown-body">' + renderMarkdown(node.answer || '') + '</div>';
+                inner += '<div class="message-actions" style="display: flex; opacity: 1;"><button class="action-btn regenerate-btn" title="重新生成"><i class="fas fa-redo"></i> 重新生成</button></div>';
+                div.innerHTML = '<div class="message-avatar">🤖</div><div class="message-content"><div class="ai-message">' + inner + '</div></div>';
+                const regenBtn = div.querySelector('.regenerate-btn');
+                if (regenBtn) regenBtn.addEventListener('click', () => regenerateMessage('a_' + node.id));
+                container.appendChild(div);
+            }
+        }
+
+        // 递归渲染：节点 → Q&A → 线性 / 分支
+        function renderMessageTree(tree, container) {
+            container.innerHTML = '';
+            if (!tree) return;
+            accordionResetFns.length = 0;
+            currentActiveBookAddFn = null;  // 重置，让初始化时重新设置
+            currentActiveBookNodeId = null;
+            renderNodeRecursive(tree, container, 0);
+            scrollToBottom();
+        }
+
+        function renderNodeRecursive(node, container, depth) {
+            renderNodeBubbles(node, container);
+            const children = node.children || [];
+            if (children.length === 1) {
+                renderNodeRecursive(children[0], container, depth);
+            } else if (children.length > 1) {
+                const book = createBranchBook(children, depth, null);
+                container.appendChild(book.element);
+            }
+        }
+
+        // 沿单子链渲染并返回线程末端节点（用于确定"继续追问"的挂载点）
+        function renderSubtreeTail(node, container, depth) {
+            renderNodeBubbles(node, container);
+            const children = node.children || [];
+            if (children.length === 1) {
+                return renderSubtreeTail(children[0], container, depth);
+            }
+            return node;
+        }
+
+        // 分支页内容：Q&A + 子树 + 输入框（输入框挂在线程末端）
+        function renderBranchPage(node, content, depth) {
+            renderNodeBubbles(node, content);
+            const children = node.children || [];
+            let tailNode = node;
+            if (children.length === 1) {
+                tailNode = renderSubtreeTail(children[0], content, depth + 1);
+            } else if (children.length > 1) {
+                const nestedWrap = document.createElement('div');
+                nestedWrap.className = 'branch-nested-wrap';
+                nestedWrap.style.setProperty('--depth-color', DEPTH_COLORS[depth % DEPTH_COLORS.length]);
+                const label = document.createElement('div');
+                label.className = 'branch-nested-label';
+                label.innerHTML = '<span>↳ 该分支下有 ' + children.length + ' 个子分支</span><span>可继续切换 / 追加</span>';
+                nestedWrap.appendChild(label);
+                const book = createBranchBook(children, depth + 1, null);
+                nestedWrap.appendChild(book.element);
+                content.appendChild(nestedWrap);
+            }
+            addBranchInput(tailNode, content);
+        }
+
+        // 分支输入框
+        function addBranchInput(node, content) {
+            const row = document.createElement('div');
+            row.className = 'branch-input-row';
+            const inputBox = document.createElement('textarea');
+            inputBox.className = 'branch-input-box';
+            inputBox.placeholder = '在此分支继续追问…';
+            const sendBtn = document.createElement('button');
+            sendBtn.className = 'branch-input-send';
+            sendBtn.textContent = '发送';
+            sendBtn.addEventListener('click', () => {
+                const text = inputBox.value.trim();
+                if (!text || sendBtn.disabled) return;
+                inputBox.disabled = true;
+                sendBtn.disabled = true;
+                continueBranch(node, text, row).finally(() => {
+                    inputBox.disabled = false;
+                    sendBtn.disabled = false;
+                    inputBox.value = '';
+                });
+            });
+            inputBox.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+            });
+            row.appendChild(inputBox);
+            row.appendChild(sendBtn);
+            content.appendChild(row);
+        }
+
+        function truncateQ(q) {
+            const s = (q || '').replace(/\s+/g, ' ');
+            return s.length > 14 ? s.slice(0, 14) + '…' : s;
+        }
+
+        // 草稿分支编辑器：输入新问题 → 发送生成新分支 / 取消删除草稿
+        function renderDraftContent(node, page, content, onSubmit, onCancel) {
+            const titleRow = document.createElement('div');
+            titleRow.className = 'branch-title-row';
+            titleRow.innerHTML =
+                '<span class="branch-order-num">' + (node.branch_order || '') + '</span>' +
+                '<strong>新的并排分支</strong><span class="branch-draft-badge">待发送</span>';
+            content.appendChild(titleRow);
+
+            const tip = document.createElement('div');
+            tip.className = 'draft-tip';
+            tip.textContent = '这是与当前节点并排的新对话（同一层级），输入问题后将独立生成回答，不影响其它分支。';
+            content.appendChild(tip);
+
+            const textarea = document.createElement('textarea');
+            textarea.className = 'draft-input';
+            textarea.placeholder = '例如：如果换一种思路会怎样？';
+            content.appendChild(textarea);
+
+            const btnRow = document.createElement('div');
+            btnRow.className = 'draft-btn-row';
+            const sendBtn = document.createElement('button');
+            sendBtn.className = 'draft-send-btn';
+            sendBtn.textContent = '发送，生成该分支';
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'draft-cancel-btn';
+            cancelBtn.textContent = '取消';
+            sendBtn.addEventListener('click', () => {
+                const val = textarea.value.trim();
+                if (!val) { textarea.focus(); return; }
+                if (sendBtn.disabled) return;
+                sendBtn.disabled = true;
+                cancelBtn.disabled = true;
+                onSubmit(node, val, content, page);
+            });
+            cancelBtn.addEventListener('click', () => onCancel(node, page));
+            textarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+            });
+            btnRow.appendChild(sendBtn);
+            btnRow.appendChild(cancelBtn);
+            content.appendChild(btnRow);
+
+            requestAnimationFrame(() => textarea.focus());
+        }
+
+        // 新增并排分支：后端建节点 → 流式生成回答 → 刷新整棵树
+        async function streamNewBranch(node, text, content, page) {
+            if (node.parent_id == null) {
+                alert('无法在根节点下新增分支');
+                return;
+            }
+            // 1. 后端创建分支节点
+            let branchId;
+            try {
+                const resp = await fetch(`${backendUrl.value}/branches/${currentChatId.value}/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parent_id: String(node.parent_id), question: text })
+                });
+                const result = await resp.json();
+                if (result.code !== 200) throw new Error(result.message || '创建分支失败');
+                branchId = String(result.data.branch_id);
+            } catch (e) {
+                alert('创建分支失败: ' + e.message);
+                return;
+            }
+
+            // 2. 用真实 ID 替换草稿节点/页面
+            node.id = branchId;
+            node.question = text;
+            node.draft = false;
+            page.dataset.nodeId = branchId;
+
+            // 3. 清空草稿编辑器，渲染 Q&A 气泡
+            content.innerHTML = '';
+            const qBubble = document.createElement('div');
+            qBubble.className = 'message user';
+            qBubble.innerHTML = '<div class="message-avatar">👤</div><div class="message-content"><div class="user-message"><div>' + escapeHtml(text) + '</div></div></div>';
+            content.appendChild(qBubble);
+            const aBubble = document.createElement('div');
+            aBubble.className = 'message assistant';
+            aBubble.innerHTML = '<div class="message-avatar">🤖</div><div class="message-content"><div class="ai-message"><div class="text-content markdown-body"></div></div></div>';
+            content.appendChild(aBubble);
+            const textEl = aBubble.querySelector('.text-content');
+            let answerText = '';
+
+            // 4. 流式生成回答（复用该记录，历史截止到父节点）
+            try {
+                const apiUrl = APP_API.getStreamChatUrl(backendUrl.value, selectedAgent.value, false);
+                const url = new URL(apiUrl, window.location.origin);
+                url.searchParams.append('query', text);
+                url.searchParams.append('conversationId', currentChatId.value);
+                url.searchParams.append('regenerateFromId', branchId);
+                url.searchParams.append('untilMessageId', String(node.parent_id));
+
+                abortController = new AbortController();
+                const res = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
+                    signal: abortController.signal,
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let i;
+                    while ((i = buf.indexOf('\n')) !== -1) {
+                        const line = buf.substring(0, i); buf = buf.substring(i + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const d = line.slice(6).trim();
+                        if (!d || d === STREAM_TYPES.DONE) continue;
+                        try {
+                            const evt = JSON.parse(d);
+                            if (evt.type === 'text' && evt.content) {
+                                answerText += evt.content;
+                                textEl.innerHTML = renderMarkdown(answerText);
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    textEl.innerHTML = renderMarkdown('⚠️ ' + err.message);
+                }
+            } finally {
+                abortController = null;
+            }
+            // 5. 完成后刷新整棵树（草稿结构被真实节点替换）
+            await refreshTreeView();
+        }
+
+        // 3D 书本：同层分支并排展示
+        function createBranchBook(siblings, depth, notifyParentHeight) {
+            const isTop = depth === 0;
+            const shell = document.createElement('div');
+            shell.className = 'branch-shell' + (isTop ? '' : ' nested');
+            const stage = document.createElement('div');
+            stage.className = 'branch-stage';
+            const tabsWrap = document.createElement(isTop ? 'nav' : 'div');
+            tabsWrap.className = isTop ? 'rail-tabs' : 'pill-tabs';
+            if (isTop) { shell.appendChild(stage); shell.appendChild(tabsWrap); }
+            else { shell.appendChild(tabsWrap); shell.appendChild(stage); }
+
+            let current = 0;
+            const pageEls = [];
+            const tabEls = [];
+
+            function updateHeight() {
+                requestAnimationFrame(() => {
+                    // 取所有页中最高的那个，避免短页漏出长页
+                    let maxH = 0;
+                    pageEls.forEach(p => { if (p.offsetHeight > maxH) maxH = p.offsetHeight; });
+                    if (maxH > 0) stage.style.height = maxH + 'px';
+                    if (notifyParentHeight) notifyParentHeight();
+                });
+            }
+
+            function layout() {
+                pageEls.forEach((page, i) => {
+                    page.classList.remove('active', 'before', 'after');
+                    if (i === current) page.classList.add('active');
+                    else if (i < current) { page.classList.add('before'); page.style.setProperty('--d', current - i); }
+                    else { page.classList.add('after'); page.style.setProperty('--d', i - current); }
+                });
+                tabEls.forEach((tab, i) => tab.classList.toggle('current', i === current));
+                updateHeight();
+            }
+
+            function resetToActive() {
+                const idx = siblings.findIndex(n => n.is_active_branch);
+                current = idx === -1 ? siblings.length - 1 : idx;
+                layout();
+            }
+            accordionResetFns.push(resetToActive);
+
+            const ro = new ResizeObserver(updateHeight);
+
+            // 在本层新增并排分支：追加一个草稿页并切换到它
+            // overrideParentId: 工具栏调用时传入活跃节点 id，新分支挂在该节点下
+            function addDraftBranch(overrideParentId) {
+                // 过滤掉事件对象（addTab 直接绑定时 click event 会作为第一个参数传入）
+                const validOverride = (typeof overrideParentId === 'string' || typeof overrideParentId === 'number')
+                    ? overrideParentId : undefined;
+                const parentId = validOverride !== undefined ? validOverride
+                    : (siblings.length ? siblings[0].parent_id : null);
+                const maxOrder = siblings.reduce((m, s) => Math.max(m, s.branch_order || 0), 0);
+                const draftNode = {
+                    id: 'draft_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+                    parent_id: parentId,
+                    branch_order: maxOrder + 1,
+                    is_active_branch: false,
+                    draft: true,
+                    question: '',
+                    answer: '',
+                    children: [],
+                    parentNode: null
+                };
+                siblings.push(draftNode);
+                buildOne(draftNode);
+                tabsWrap.appendChild(addTab);  // 保证“+”始终在最后
+                current = pageEls.length - 1;
+                layout();
+            }
+
+            function cancelDraft(node, page) {
+                const sIdx = siblings.indexOf(node);
+                if (sIdx > -1) siblings.splice(sIdx, 1);
+                const pIdx = pageEls.indexOf(page);
+                if (pIdx > -1) {
+                    pageEls.splice(pIdx, 1);
+                    const [removedTab] = tabEls.splice(pIdx, 1);
+                    if (removedTab) removedTab.remove();
+                }
+                page.remove();
+                tabsWrap.appendChild(addTab);
+                current = Math.max(0, siblings.length - 1);
+                layout();
+            }
+
+            function buildOne(node) {
+                const page = document.createElement('article');
+                page.className = 'branch-page' + (isTop ? '' : ' sub');
+                page.dataset.nodeId = String(node.id);
+                const content = document.createElement('div');
+                content.className = 'branch-page-content';
+                page.appendChild(content);
+                stage.appendChild(page);
+                pageEls.push(page);
+                ro.observe(page);
+
+                if (node.draft) {
+                    renderDraftContent(node, page, content, streamNewBranch, cancelDraft);
+                } else {
+                    renderBranchPage(node, content, depth);
+                }
+
+                const tab = document.createElement('button');
+                tab.className = isTop ? 'rail-tab' : 'pill-tab';
+                tab.textContent = node.draft
+                    ? '分支 ' + (node.branch_order || '') + '（待填写）'
+                    : (isTop ? '分支 ' + (node.branch_order || '') + '：' : '') + truncateQ(node.question);
+                tab.addEventListener('click', () => {
+                    if (dragState && dragState.moved) return; // 拖拽中不切换
+                    const idx = pageEls.indexOf(page);
+                    if (idx !== -1 && idx !== current) { current = idx; layout(); }
+                    currentActiveBookAddFn = addDraftBranch;
+                    currentActiveBookNodeId = node.id;
+                });
+                tab.addEventListener('mousedown', (e) => { startDragTab(e, tab, node); });
+                tab.addEventListener('touchstart', (e) => { startDragTab(e, tab, node); }, { passive: true });
+                tabsWrap.appendChild(tab);
+                tabEls.push(tab);
+            }
+
+            siblings.forEach(buildOne);
+
+            const addTab = document.createElement('button');
+            addTab.className = (isTop ? 'rail-tab' : 'pill-tab') + ' add-tab';
+            addTab.textContent = isTop ? '＋ 新增分支' : '＋ 新增';
+            tabsWrap.appendChild(addTab);
+            addTab.addEventListener('click', addDraftBranch);
+
+            // 优先选中活跃分支（新分支会被标记为活跃 → 栈顶优先且文字清晰）
+            const activeIdx = siblings.findIndex(n => n.is_active_branch);
+            current = activeIdx !== -1 ? activeIdx : siblings.length - 1;
+            layout();
+            // 仅在用户未点击过任何标签时初始化（避免覆盖用户已选择的层级）
+            if (!currentActiveBookAddFn) {
+                currentActiveBookAddFn = addDraftBranch;
+                currentActiveBookNodeId = siblings[current] ? siblings[current].id : null;
+            }
+
+            return { element: shell, updateHeight };
+        }
+
+        // 通用：以指定父节点继续对话（流式输出到容器内）
+        async function streamWithParent(parentId, text, container, insertBeforeEl) {
+            const qBubble = document.createElement('div');
+            qBubble.className = 'message user';
+            qBubble.innerHTML = '<div class="message-avatar">👤</div><div class="message-content"><div class="user-message"><div>' + escapeHtml(text) + '</div></div></div>';
+            const aBubble = document.createElement('div');
+            aBubble.className = 'message assistant';
+            aBubble.innerHTML = '<div class="message-avatar">🤖</div><div class="message-content"><div class="ai-message"><div class="text-content markdown-body"></div></div></div>';
+            const textEl = aBubble.querySelector('.text-content');
+            if (insertBeforeEl) { container.insertBefore(qBubble, insertBeforeEl); container.insertBefore(aBubble, insertBeforeEl); }
+            else { container.appendChild(qBubble); container.appendChild(aBubble); }
+            let answerText = '';
+
+            try {
+                const apiUrl = APP_API.getStreamChatUrl(backendUrl.value, selectedAgent.value, false);
+                const url = new URL(apiUrl, window.location.origin);
+                url.searchParams.append('query', text);
+                url.searchParams.append('conversationId', currentChatId.value);
+                url.searchParams.append('parentId', String(parentId));
+                url.searchParams.append('untilMessageId', String(parentId));
+
+                abortController = new AbortController();
+                const res = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
+                    signal: abortController.signal,
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let i;
+                    while ((i = buf.indexOf('\n')) !== -1) {
+                        const line = buf.substring(0, i); buf = buf.substring(i + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const d = line.slice(6).trim();
+                        if (!d || d === STREAM_TYPES.DONE) continue;
+                        try {
+                            const evt = JSON.parse(d);
+                            if (evt.type === 'text' && evt.content) {
+                                answerText += evt.content;
+                                textEl.innerHTML = renderMarkdown(answerText);
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    textEl.innerHTML = renderMarkdown('⚠️ ' + err.message);
+                }
+            } finally {
+                abortController = null;
+            }
+            // 完成后刷新整棵树
+            await refreshTreeView();
+        }
+
+        // 分支内继续追问
+        async function continueBranch(node, text, inputRow) {
+            await streamWithParent(node.id, text, inputRow.parentElement, inputRow);
+        }
+
+        // 获取活跃路径的叶节点 id（树模式下底部输入框继续对话的目标）
+        async function getActiveLeafId() {
+            const detail = await APP_API.getChatDetail(backendUrl.value, currentChatId.value);
+            if (!detail) return null;
+            const tree = buildTree(detail.messages);
+            if (!tree) return null;
+            let node = tree;
+            while (true) {
+                const children = node.children || [];
+                if (!children.length) return node.id;
+                // 优先活跃分支；多个活跃取 branch_order 最大（最新）
+                const actives = children.filter(c => c.is_active_branch);
+                let target = null;
+                if (actives.length === 1) target = actives[0];
+                else if (actives.length > 1) target = actives[actives.length - 1];
+                else if (children.length === 1) target = children[0];
+                else target = children[children.length - 1];
+                node = target;
+            }
+        }
+
+        // 将所有层级的手风琴书本切回活跃分支
+        function resetToMainBranch() {
+            accordionResetFns.forEach(fn => fn());
+        }
+
+        // 在当前活跃分支所在层级新增并排分支
+        let currentActiveBookAddFn = null;  // { fn, activeNodeId }
+        let currentActiveBookNodeId = null;
+
+        function addBranchAtCurrentLevel() {
+            if (currentActiveBookAddFn) currentActiveBookAddFn(currentActiveBookNodeId);
+        }
+
+        // 刷新树视图 + 主对话
+        async function refreshTreeView() {
+            const chat = currentChat.value;
+            if (!chat) return;
+            const detail = await APP_API.getChatDetail(backendUrl.value, currentChatId.value);
+            if (!detail) return;
+            chat.messages = buildMessages(detail);
+            const tree = buildTree(detail.messages);
+            if (tree && hasBranches(tree)) {
+                showAccordion.value = true;
+                const treeEl = document.getElementById('messageTree');
+                if (treeEl) renderMessageTree(tree, treeEl);
+            } else {
+                showAccordion.value = false;
+            }
+            scrollToBottom();
+        }
+
+        // ===== 拖拽删除分支标签 =====
+        let dragState = null; // { tab, node, isTop, startX, startY, offsetX, offsetY }
+
+        function startDragTab(e, tab, node) {
+            if (isSending.value) return;
+            if (tab.classList.contains('add-tab')) return; // "+" 标签不允许删除
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            dragState = {
+                tab, node,
+                isTop: tab.classList.contains('rail-tab'),
+                startX: clientX, startY: clientY,
+                offsetX: 0, offsetY: 0, moved: false,
+            };
+        }
+
+        function onDragTab(e) {
+            if (!dragState) return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const dx = clientX - dragState.startX;
+            const dy = clientY - dragState.startY;
+            dragState.offsetX = dx;
+            dragState.offsetY = dy;
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragState.moved = true;
+            const { tab, isTop } = dragState;
+            tab.classList.add('swiping');
+
+            if (isTop) {
+                const dist = Math.max(0, dx);
+                tab.style.transform = 'translateX(' + dist + 'px)';
+                tab.classList.toggle('delete-ready', dist > 60);
+            } else {
+                const dist = Math.max(0, -dy);
+                tab.style.transform = 'translateY(' + (-dist) + 'px)';
+                tab.classList.toggle('delete-ready', dist > 50);
+            }
+            if (e.cancelable) e.preventDefault(); // 阻止选中文本
+        }
+
+        function endDragTab() {
+            if (!dragState) return;
+            const { tab, node, isTop, offsetX, offsetY } = dragState;
+            tab.classList.remove('swiping');
+
+            const pastThreshold = isTop ? offsetX > 60 : offsetY < -50;
+
+            if (pastThreshold && node.id) {
+                // 确认删除：飞走动画 → 刷新
+                tab.classList.add('deleted');
+                const msgId = String(node.id).replace(/^[ua]_/, '');
+                setTimeout(async () => {
+                    await deleteBranchById(msgId);
+                    await refreshTreeView();
+                }, 350);
+            } else {
+                // 弹回原位
+                tab.style.transition = 'transform .4s cubic-bezier(.22,1,.36,1)';
+                tab.style.transform = '';
+                tab.addEventListener('transitionend', function handler() {
+                    tab.style.transition = '';
+                    tab.removeEventListener('transitionend', handler);
+                });
+            }
+
+            tab.classList.remove('delete-ready');
+            dragState = null;
+        }
+
+        async function deleteBranchById(messageId) {
+            try {
+                const resp = await fetch(
+                    `${backendUrl.value}/branches/${currentChatId.value}/${messageId}`,
+                    { method: 'DELETE' }
+                );
+                const result = await resp.json();
+                if (result.code !== 200) {
+                    console.error('删除分支失败:', result.message || result.error);
+                }
+            } catch (e) {
+                console.error('删除分支请求失败:', e);
+            }
+        }
+
+        // 树模式下：把 SSE 流式输出写入指定分支页内
+        async function streamIntoTreePage(regenId, query) {
+            const page = document.querySelector(`.branch-page[data-node-id="${regenId}"]`);
+            if (!page) return false;
+            const content = page.querySelector('.branch-page-content');
+            if (!content) return false;
+            const inputRow = content.querySelector('.branch-input-row');
+
+            // 复用已存在的回复气泡（重新生成时），否则新建
+            let aBubble = content.querySelector(':scope > .message.assistant');
+            let textEl;
+            if (aBubble) {
+                textEl = aBubble.querySelector('.text-content');
+                if (textEl) textEl.innerHTML = '';
+            }
+            if (!aBubble || !textEl) {
+                aBubble = document.createElement('div');
+                aBubble.className = 'message assistant';
+                aBubble.innerHTML = '<div class="message-avatar">🤖</div><div class="message-content"><div class="ai-message"><div class="text-content markdown-body"></div></div></div>';
+                textEl = aBubble.querySelector('.text-content');
+                if (inputRow) content.insertBefore(aBubble, inputRow);
+                else content.appendChild(aBubble);
+            }
+            let answerText = '';
+            let thinkingText = '';
+
+            try {
+                const apiUrl = APP_API.getStreamChatUrl(backendUrl.value, selectedAgent.value, false);
+                const url = new URL(apiUrl, window.location.origin);
+                url.searchParams.append('query', query);
+                url.searchParams.append('conversationId', currentChatId.value);
+                url.searchParams.append('regenerateFromId', regenId);
+
+                abortController = new AbortController();
+                const res = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
+                    signal: abortController.signal,
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let i;
+                    while ((i = buf.indexOf('\n')) !== -1) {
+                        const line = buf.substring(0, i); buf = buf.substring(i + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const d = line.slice(6).trim();
+                        if (!d || d === STREAM_TYPES.DONE) continue;
+                        try {
+                            const evt = JSON.parse(d);
+                            if (evt.type === 'text' && evt.content) {
+                                answerText += evt.content;
+                                textEl.innerHTML = renderMarkdown(answerText);
+                            } else if (evt.type === 'thinking' && evt.content) {
+                                thinkingText += evt.content;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    textEl.innerHTML = renderMarkdown('⚠️ ' + err.message);
+                }
+            } finally {
+                abortController = null;
+            }
+            // 完成后刷新整棵树
+            await refreshTreeView();
+            return true;
+        }
+
+        // 树模式下重新生成：就地流式更新该节点的回复气泡
+        async function streamRegenerateInTree(messageId, question) {
+            const bubble = document.querySelector(`.message.assistant[data-node-id="${messageId}"]`);
+            let textEl = null;
+            if (bubble) textEl = bubble.querySelector('.text-content');
+            if (textEl) textEl.innerHTML = '';
+
+            if (!textEl) {
+                // 找不到气泡，退化为追加到页面
+                return streamIntoTreePage(messageId, question);
+            }
+
+            let answerText = '';
+            try {
+                const apiUrl = APP_API.getStreamChatUrl(backendUrl.value, selectedAgent.value, false);
+                const url = new URL(apiUrl, window.location.origin);
+                url.searchParams.append('query', question);
+                url.searchParams.append('conversationId', currentChatId.value);
+                url.searchParams.append('regenerateFromId', messageId);
+
+                abortController = new AbortController();
+                const res = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
+                    signal: abortController.signal,
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let i;
+                    while ((i = buf.indexOf('\n')) !== -1) {
+                        const line = buf.substring(0, i); buf = buf.substring(i + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const d = line.slice(6).trim();
+                        if (!d || d === STREAM_TYPES.DONE) continue;
+                        try {
+                            const evt = JSON.parse(d);
+                            if (evt.type === 'text' && evt.content) {
+                                answerText += evt.content;
+                                textEl.innerHTML = renderMarkdown(answerText);
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    textEl.innerHTML = renderMarkdown('⚠️ ' + err.message);
+                }
+            } finally {
+                abortController = null;
+            }
+            await refreshTreeView();
+            return true;
+        }
+
         // ===== 新建会话 =====
         const createNewChat = () => {
             const exists = chatList.value.find(c => c.isNew);
@@ -369,6 +1159,27 @@ createApp({
                         );
                     }
                 } catch (e) { console.error('Persist conversation error:', e); }
+            }
+
+            // 树模式（有分支）：继续活跃分支，流式输出到树视图
+            if (showAccordion.value) {
+                try {
+                    const activeLeafId = await getActiveLeafId();
+                    if (activeLeafId) {
+                        const treeEl = document.getElementById('messageTree');
+                        if (treeEl) {
+                            scrollToBottom();
+                            await streamWithParent(activeLeafId, msg || '请分析这个文件', treeEl, null);
+                        }
+                    }
+                } catch (e) {
+                    console.error('树模式发送失败:', e);
+                    alert('发送失败: ' + e.message);
+                } finally {
+                    isSending.value = false;
+                    abortController = null;
+                }
+                return;
             }
 
             // 添加用户消息
@@ -647,7 +1458,7 @@ createApp({
                 const chat = currentChat.value;
                 if (chat) {
                     chat.messages = [];
-                    await selectChat(currentChatId.value);
+                    await selectChat(currentChatId.value, { skipReconnect: true });
                     const fresh = chat.messages.find(m => m.role === 'user' && m.content === editText.value);
                     if (fresh) {
                         finalMsgIdStr = fresh.id;
@@ -683,9 +1494,21 @@ createApp({
                     const chat = currentChat.value;
                     if (!chat) return;
 
-                    // 刷新消息列表：不分支模式下后端已删除旧 answer，只剩 user 消息
+                    // 分支模式下，使用新分支的 ID 作为 regenerateFromId
+                    const regenId = shouldCreateBranch ? result.data.branch_id : msgId;
+
+                    // 刷新消息列表
                     chat.messages = [];
-                    await selectChat(currentChatId.value);
+                    await selectChat(currentChatId.value, { skipReconnect: true });
+
+                    // 树模式（有分支）：流式输出到手风琴新分支页内，栈顶优先显示
+                    if (showAccordion.value) {
+                        isSending.value = true;
+                        scrollToBottom();
+                        await streamIntoTreePage(regenId, newQuestion);
+                        isSending.value = false;
+                        return;
+                    }
 
                     // 移除残留的旧 AI 回复（如有）
                     const userIdx = chat.messages.findIndex(m => m.id === 'u_' + msgId);
@@ -729,7 +1552,7 @@ createApp({
                     const url = new URL(apiUrl, window.location.origin);
                     url.searchParams.append('query', newQuestion);
                     url.searchParams.append('conversationId', currentChatId.value);
-                    url.searchParams.append('regenerateFromId', msgId);
+                    url.searchParams.append('regenerateFromId', regenId);
 
                     try {
                         abortController = new AbortController();
@@ -759,7 +1582,7 @@ createApp({
                     } catch (err) {
                         if (err.name !== 'AbortError') {
                             reactiveAiMsg.content += '\n\n⚠️ ' + err.message;
-                            updateStreamContent(aiMsg.content);
+                            updateStreamContent(reactiveAiMsg.content);
                         }
                     } finally {
                         isSending.value = false;
@@ -786,7 +1609,7 @@ createApp({
             // 如果是客户端临时 ID（chat_xxx），先从后端刷新拿到数据库 ID
             if (messageIdStr.startsWith('chat_')) {
                 chat.messages = [];
-                await selectChat(currentChatId.value);
+                await selectChat(currentChatId.value, { skipReconnect: true });
                 // 刷新后取最后一条 assistant 消息
                 const fresh = chat.messages.filter(m => m.role === 'assistant').pop();
                 if (fresh) {
@@ -830,6 +1653,14 @@ createApp({
             scrollToBottom();
 
             const messageId = messageIdStr.replace(/^[ua]_/, '');
+
+            // 树模式：就地更新该节点的回复气泡
+            if (showAccordion.value) {
+                await streamRegenerateInTree(messageId, question);
+                isSending.value = false;
+                return;
+            }
+
             const apiUrl = APP_API.getStreamChatUrl(backendUrl.value, selectedAgent.value, false);
             const url = new URL(apiUrl, window.location.origin);
             url.searchParams.append('query', question);
@@ -1014,10 +1845,10 @@ createApp({
             archiveChat, restoreChat, showDeleteModal, deleteConfirmText,
             openDeleteModal, closeDeleteModal, confirmDelete,
             // 分支管理
-            editingMessageId, editText, createBranch,
+            editingMessageId, editText, createBranch, showAccordion,
             startEditMessage, cancelEditMessage, submitEdit,
             regenerateMessage, switchToBranch, loadSiblingBranches,
-            prevBranch, nextBranch
+            prevBranch, nextBranch, addBranchAtCurrentLevel
         };
     }
 }).mount('#app');

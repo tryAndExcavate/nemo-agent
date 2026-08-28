@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>豆豆</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
-    <link rel="stylesheet" href="css/style.css?v=10">
+    <link rel="stylesheet" href="css/style.css?v=14">
     <!-- Vue 3 CDN -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- Marked.js for Markdown rendering -->
@@ -145,6 +145,15 @@
                         </div>
                     </div>
 
+                    <!-- 树视图工具条 -->
+                    <div v-show="showAccordion" class="accordion-toolbar">
+                        <button class="reset-main-btn" @click="addBranchAtCurrentLevel" title="在当前活跃分支所在层级新增一条并排对话">➕ 新增并排分支</button>
+                    </div>
+                    <!-- 树视图：有分支时由 JS 递归渲染，手风琴替换分支轮次 -->
+                    <div v-show="showAccordion" id="messageTree" class="tree-view"></div>
+
+                    <!-- 线性视图：无分支时 Vue 渲染 -->
+                    <div v-if="!showAccordion">
                     <div v-for="(msg, index) in currentChat?.messages || []" :key="index" :class="['message', msg.role]">
                         <div class="message-avatar">
                             {{ msg.role === 'user' ? '👤' : '🤖' }}
@@ -328,6 +337,7 @@
                             </div>
                         </div>
                     </div>
+                    </div>
                 </div>
 
                 <!-- 输入区域 -->
@@ -452,6 +462,6 @@
     <script src="js/utils.js?v=9"></script>
     <script src="js/api.js?v=5"></script>
     <!-- 主应用 -->
-    <script src="js/app.js?v=13"></script>
+    <script src="js/app.js?v=32"></script>
 </body>
 </html>

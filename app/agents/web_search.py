@@ -20,8 +20,8 @@ class WebSearchReActAgent(BaseAgent):
         self.tools = tools
         self.max_rounds = max_rounds
 
-    async def stream(self, conversation_id: str, question: str, until_message_id: int | None = None, regenerate_from_id: str | None = None) -> AsyncGenerator[str, None]:
-        print("在此处A")
+    async def stream(self, conversation_id: str, question: str, until_message_id: int | None = None, regenerate_from_id: str | None = None, parent_id: int | None = None) -> AsyncGenerator[str, None]:
+        # print("在此处A")
         task_info = await task_manager.register_task(conversation_id, "websearch")
         if task_info is None and await task_manager.has_running_task(conversation_id):
             yield BaseAgent.error_response("该会话中存在正在执行的任务，请稍后再试")
@@ -51,7 +51,7 @@ class WebSearchReActAgent(BaseAgent):
         all_references: list[dict] = []
 
         try:
-            await self._save_question(conversation_id, question)
+            await self._save_question(conversation_id, question, parent_id=parent_id)
             svc = SessionService(db)
 
             # 使用上下文压缩器智能管理历史消息

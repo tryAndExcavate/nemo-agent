@@ -21,12 +21,27 @@ class SessionService:
         return list(result.scalars().all())
 
     async def save_question(self, request: SaveQuestionRequest) -> AiSession:
+        # 查找同会话最新的已有消息，作为 parent_id
+        parent_id = request.parent_id
+        if parent_id is None:
+            stmt = (
+                select(AiSession.id)
+                .where(AiSession.session_id == request.session_id)
+                .order_by(AiSession.create_time.desc())
+                .limit(1)
+            )
+            res = await self.db.execute(stmt)
+            latest = res.scalar_one_or_none()
+            if latest is not None:
+                parent_id = latest
+
         session = AiSession(
             session_id=request.session_id,
             question=request.question,
             fileid=request.fileid,
             first_response_time=request.first_response_time,
             agent_type=None,
+            parent_id=parent_id,
         )
         self.db.add(session)
         await self.db.commit()

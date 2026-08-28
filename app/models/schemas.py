@@ -41,6 +41,7 @@ class SaveQuestionRequest(BaseModel):
     question: str
     fileid: Optional[str] = None
     first_response_time: Optional[int] = None
+    parent_id: Optional[int] = None
 
 
 class UpdateAnswerRequest(BaseModel):
@@ -175,6 +176,12 @@ class RegenerateRequest(BaseModel):
 class SwitchBranchRequest(BaseModel):
     """切换分支请求"""
     target_branch_id: str  # 雪花ID用字符串
+
+
+class CreateBranchRequest(BaseModel):
+    """新增并排分支请求"""
+    parent_id: str  # 分叉点节点ID（雪花ID用字符串）
+    question: str
 
 
 class BranchResponse(BaseModel):

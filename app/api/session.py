@@ -77,6 +77,9 @@ async def get_session(conversation_id: str, db: AsyncSession = Depends(get_db)):
                 "create_time": s.create_time.isoformat() if s.create_time else None,
                 "fileid": s.fileid,
                 "recommend": s.recommend,
+                "parent_id": str(s.parent_id) if s.parent_id is not None else None,
+                "is_active_branch": s.is_active_branch,
+                "branch_order": s.branch_order,
             })
 
         return {

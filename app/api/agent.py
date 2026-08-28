@@ -105,12 +105,20 @@ async def _run_agent_to_stream(agent, conversation_id: str, agent_gen):
         await agent._close_db()
 
 
-def _start_agent_task(agent, conversation_id: str, agent_gen) -> asyncio.Task:
-    """启动后台 agent 任务"""
+async def _start_agent_task(agent, conversation_id: str, agent_gen) -> asyncio.Task:
+    """启动后台 agent 任务（await 完成旧 Stream 清理，保证顺序正确）"""
     # 取消同会话的旧任务
     old = _background_tasks.pop(conversation_id, None)
     if old and not old.done():
         old.cancel()
+
+    # 清理旧 Redis Stream，确保 _read_stream_sse("0") 从新任务开始读，不重放旧事件
+    sm = get_stream_manager()
+    if sm and sm.available:
+        try:
+            await sm.cleanup(conversation_id)
+        except Exception:
+            pass
 
     task = asyncio.create_task(_run_agent_to_stream(agent, conversation_id, agent_gen))
     _background_tasks[conversation_id] = task
@@ -157,6 +165,7 @@ async def web_search_stream(
     conversationId: str = Query(...),
     untilMessageId: int | None = Query(None),
     regenerateFromId: str | None = Query(None),
+    parentId: str | None = Query(None),
 ):
     """智能问答 - Agent 后台运行，SSE 从 Redis Stream 读取"""
     from app.agents.web_search import WebSearchReActAgent
@@ -164,8 +173,9 @@ async def web_search_stream(
     agent = WebSearchReActAgent(llm_client=llm_client, model=model, tools=WEB_SEARCH_TOOLS, max_rounds=5)
 
     # 启动后台 agent 任务（不绑定 HTTP 连接）
-    _start_agent_task(agent, conversationId,
-                      agent.stream(conversationId, query, until_message_id=untilMessageId, regenerate_from_id=regenerateFromId))
+    await _start_agent_task(agent, conversationId,
+                            agent.stream(conversationId, query, until_message_id=untilMessageId, regenerate_from_id=regenerateFromId,
+                                         parent_id=int(parentId) if parentId else None))
 
     # SSE 从 Redis Stream 读取（客户端断开不影响 agent）
     return StreamingResponse(
@@ -202,7 +212,7 @@ async def file_stream(
     from app.agents.file_qa import FileReActAgent
     llm_client, model = _resolve_llm()
     agent = FileReActAgent(llm_client=llm_client, model=model, tools=FILE_TOOLS, max_rounds=5)
-    _start_agent_task(agent, conversationId, agent.stream(conversationId, query, fileId))
+    await _start_agent_task(agent, conversationId, agent.stream(conversationId, query, fileId))
     return StreamingResponse(_read_stream_sse(conversationId), media_type="text/event-stream")
 
 
@@ -212,7 +222,7 @@ async def pptx_stream(query: str = Query(...), conversationId: str = Query(...))
     from app.agents.ppt_builder import PPTBuilderAgent
     llm_client, model = _resolve_llm()
     agent = PPTBuilderAgent(llm_client=llm_client, model=model, tools=WEB_SEARCH_TOOLS)
-    _start_agent_task(agent, conversationId, agent.stream(conversationId, query))
+    await _start_agent_task(agent, conversationId, agent.stream(conversationId, query))
     return StreamingResponse(_read_stream_sse(conversationId), media_type="text/event-stream")
 
 
@@ -222,7 +232,7 @@ async def deep_stream(query: str = Query(...), conversationId: str = Query(...))
     from app.agents.deep_research import PlanExecuteAgent
     llm_client, model = _resolve_llm()
     agent = PlanExecuteAgent(llm_client=llm_client, model=model, tools=WEB_SEARCH_TOOLS, max_rounds=3)
-    _start_agent_task(agent, conversationId, agent.stream(conversationId, query))
+    await _start_agent_task(agent, conversationId, agent.stream(conversationId, query))
     return StreamingResponse(_read_stream_sse(conversationId), media_type="text/event-stream")
 
 
@@ -238,7 +248,7 @@ async def skills_stream(
         set_skills_directory(settings.skills_directory)
     llm_client, model = _resolve_llm()
     agent = SkillsReActAgent(llm_client=llm_client, model=model, tools=SKILLS_TOOLS, max_rounds=10)
-    _start_agent_task(agent, conversationId, agent.stream(conversationId, query, fileId))
+    await _start_agent_task(agent, conversationId, agent.stream(conversationId, query, fileId))
     return StreamingResponse(_read_stream_sse(conversationId), media_type="text/event-stream")
 
 

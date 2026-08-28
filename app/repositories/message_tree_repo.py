@@ -121,14 +121,11 @@ class MessageTreeRepository:
         parent_id: Optional[int],
         question: str,
         is_active: bool = True,
-        original_message_id: Optional[int] = None,
         agent_type: Optional[str] = None,
         model_id: Optional[str] = None,
     ) -> AiSession:
         """
-        创建新分支
-
-        插入一条新的AiSession记录，作为parent_id的子节点
+        创建新分支（parent_id 指向分叉点）
         """
         # 获取兄弟分支数量
         stmt = select(func.count(AiSession.id)).where(
@@ -142,12 +139,21 @@ class MessageTreeRepository:
 
         new_branch_order = count + 1
 
+        # 新分支成为活跃分支时，把同级兄弟全部设为非活跃，保证 active 唯一
+        if is_active:
+            stmt = update(AiSession).where(
+                and_(
+                    AiSession.session_id == session_id,
+                    AiSession.parent_id == parent_id
+                )
+            ).values(is_active_branch=False)
+            await self.db.execute(stmt)
+
         new_msg = AiSession(
             session_id=session_id,
             parent_id=parent_id,
             branch_order=new_branch_order,
             is_active_branch=is_active,
-            original_message_id=original_message_id,
             question=question,
             agent_type=agent_type,
             model_id=model_id,
@@ -193,26 +199,28 @@ class MessageTreeRepository:
         siblings = await self.get_sibling_branches(session_id, target_msg.parent_id)
 
         # 3. 将所有兄弟分支设为非激活
-        async with self.db.begin():
-            for sibling in siblings:
-                if sibling.id != target_branch_id:
-                    stmt = update(AiSession).where(AiSession.id == sibling.id).values(
-                        is_active_branch=False
-                    )
-                    await self.db.execute(stmt)
+        for sibling in siblings:
+            if sibling.id != target_branch_id:
+                stmt = update(AiSession).where(AiSession.id == sibling.id).values(
+                    is_active_branch=False
+                )
+                await self.db.execute(stmt)
 
-            # 4. 激活目标分支
-            stmt = update(AiSession).where(AiSession.id == target_branch_id).values(
-                is_active_branch=True
-            )
-            await self.db.execute(stmt)
+        # 4. 激活目标分支
+        stmt = update(AiSession).where(AiSession.id == target_branch_id).values(
+            is_active_branch=True
+        )
+        await self.db.execute(stmt)
 
-            # 5. 更新conversations表的active_head_id
-            from app.models.conversation import Conversation
-            stmt = update(Conversation).where(
-                Conversation.session_id == session_id
-            ).values(active_head_id=target_branch_id)
-            await self.db.execute(stmt)
+        # 5. 更新conversations表的active_head_id
+        from app.models.conversation import Conversation
+        stmt = update(Conversation).where(
+            Conversation.session_id == session_id
+        ).values(active_head_id=target_branch_id)
+        await self.db.execute(stmt)
+
+        # 6. 提交事务
+        await self.db.commit()
 
         return True
 
@@ -264,25 +272,22 @@ class MessageTreeRepository:
 
     async def delete_branch_and_children(self, message_id: int):
         """
-        删除分支及其所有子消息
+        递归删除该消息的所有后代（通过 parent_id 链）
 
         用于不分支重新回复时，删除该消息之后的所有消息
+        （保留当前消息本身，其 question 会被更新并重新生成）
         """
-        # 查找所有子消息
         stmt = select(AiSession).where(
-            AiSession.original_message_id == message_id
+            AiSession.parent_id == message_id
         )
         result = await self.db.execute(stmt)
         children = result.scalars().all()
 
-        # 删除子消息
+        # 递归删除后代
         for child in children:
+            await self.delete_branch_and_children(child.id)
             stmt = text("DELETE FROM ai_session WHERE id = :id")
             await self.db.execute(stmt, {"id": child.id})
-
-        # 删除当前消息
-        stmt = text("DELETE FROM ai_session WHERE id = :id")
-        await self.db.execute(stmt, {"id": message_id})
 
     async def update_message_content(self, message_id: int, new_question: str):
         """

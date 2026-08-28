@@ -8,6 +8,7 @@ from app.models.schemas import (
     EditMessageRequest,
     RegenerateRequest,
     SwitchBranchRequest,
+    CreateBranchRequest,
     BranchResponse,
     SiblingsResponse,
 )
@@ -54,6 +55,41 @@ async def edit_message(
     except Exception as e:
         logger.error(f"编辑消息失败: {e}", exc_info=True)
         return {"code": 500, "message": f"编辑失败: {str(e)}"}
+
+
+@router.post("/{session_id}/create", response_model=dict)
+async def create_new_branch(
+    session_id: str,
+    request: CreateBranchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    新增并排分支
+
+    在指定父节点下创建一个全新的兄弟分支，父节点不变，
+    新分支成为活跃分支并停用同级兄弟
+    """
+    logger.info(f"POST /branches/{session_id}/create parent_id={request.parent_id}, question={request.question[:50] if request.question else ''}...")
+
+    try:
+        svc = EditRegenerateService(db)
+        result = await svc.create_new_branch(
+            session_id=session_id,
+            parent_id=request.parent_id,
+            question=request.question,
+        )
+
+        return {
+            "code": 200,
+            "message": "分支创建成功",
+            "data": result.model_dump(),
+        }
+    except ValueError as e:
+        logger.error(f"创建分支业务错误: {e}")
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"创建分支失败: {e}", exc_info=True)
+        return {"code": 500, "message": f"创建分支失败: {str(e)}"}
 
 
 @router.post("/{session_id}/regenerate", response_model=dict)
@@ -118,6 +154,34 @@ async def switch_branch(
     except Exception as e:
         logger.error(f"分支切换失败: {e}", exc_info=True)
         return {"code": 500, "message": f"分支切换失败: {str(e)}"}
+
+
+@router.delete("/{session_id}/{message_id}", response_model=dict)
+async def delete_branch(
+    session_id: str,
+    message_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    删除分支及其所有后代
+
+    若被删节点是活跃分支，则自动激活其同级兄弟中最新的
+    """
+    logger.info(f"DELETE /branches/{session_id}/{message_id}")
+
+    try:
+        svc = EditRegenerateService(db)
+        result = await svc.delete_branch(session_id, str(message_id))
+        return {
+            "code": 200,
+            "message": "分支已删除",
+            "data": result,
+        }
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"删除分支失败: {e}", exc_info=True)
+        return {"code": 500, "message": f"删除分支失败: {str(e)}"}
 
 
 @router.get("/{session_id}/siblings/{message_id}", response_model=dict)

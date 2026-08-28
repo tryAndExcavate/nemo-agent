@@ -95,7 +95,7 @@ class BaseAgent:
             await self._db.close()
             self._db = None
 
-    async def _save_question(self, conversation_id: str, question: str, fileid: str | None = None):
+    async def _save_question(self, conversation_id: str, question: str, fileid: str | None = None, parent_id: int | None = None):
         if self._regenerate_record_id:
             # 重新生成模式：复用已有记录，跳过插入新行
             self.current_session_id = self._regenerate_record_id
@@ -107,6 +107,7 @@ class BaseAgent:
         svc = SessionService(db)
         saved = await svc.save_question(SaveQuestionRequest(
             session_id=conversation_id, question=question, fileid=fileid,
+            parent_id=parent_id,
         ))
         self.current_session_id = saved.id
         # 同步更新 conversations 表的 active_head_id
