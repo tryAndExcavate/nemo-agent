@@ -1,0 +1,63 @@
+两层状态划分
+跨会话的（费用累计、当前模型） 和 单次会话的（消息历史、工具执行状态）
+
+# state.py
+"""
+瘦身版状态管理：只保留"两层划分"这一个核心思路，
+去掉了 Store/Selector/Observer/不可变性/锁 ——
+因为单进程 asyncio 场景下这些都是过度设计。
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+# =========================================================
+# 第一层：全局状态（进程级，跨会话共享）
+# =========================================================
+
+@dataclass
+class GlobalState:
+    """
+    只放"真正跨会话共享"的东西。
+    加字段前问自己：这个信息离开当前对话还有意义吗？没有就别放这里。
+    """
+    cwd: str
+    session_id: str
+    model: str = "gpt-4o"
+    total_cost_usd: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+
+    def record_usage(self, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+        # 单事件循环内直接累加即可，不需要加锁
+        self.total_input_tokens += input_tokens
+        self.total_output_tokens += output_tokens
+        self.total_cost_usd += cost_usd
+
+
+_global_state: Optional[GlobalState] = None
+
+
+def init_global_state(cwd: str, session_id: str, model: str = "gpt-4o") -> GlobalState:
+    """进程启动时调用一次"""
+    global _global_state
+    if _global_state is not None:
+        raise RuntimeError("GlobalState 已初始化")
+    _global_state = GlobalState(cwd=cwd, session_id=session_id, model=model)
+    return _global_state
+
+
+def get_global_state() -> GlobalState:
+    if _global_state is None:
+        raise RuntimeError("GlobalState 尚未初始化，请先调用 init_global_state()")
+    return _global_state
+
+
+# =========================================================
+# 第二层：会话状态（每个对话一份）
+# =========================================================
+
+之前我们写过的
+class QueryEngineRegistry:
+class QueryEngine

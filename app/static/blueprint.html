@@ -78,7 +78,7 @@ body {
 /* ===== 左侧：基座节点画布 ===== */
 #canvas-wrap {
     flex: 1; position: relative; min-width: 0; overflow: auto;
-    display: flex; align-items: center; justify-content: center; padding: 40px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 16px; padding: 24px 40px;
     background:
         radial-gradient(circle at 1px 1px, rgba(139,92,246,.15) 1px, transparent 0) 0 0/22px 22px,
         #17171f;
@@ -93,34 +93,44 @@ body {
 #canvas-hint b { color: var(--text-primary); }
 
 .base-node {
-    width: 380px; max-width: 92vw; min-height: 220px;
+    width: 380px; max-width: 92vw; min-height: 180px;
     background: linear-gradient(165deg, var(--panel3), var(--panel2));
     border: 2px dashed rgba(148,163,184,.5); border-radius: 18px;
-    padding: 26px 24px; text-align: center;
+    padding: 18px 22px; text-align: center;
     transition: transform .15s, box-shadow .15s, border-color .15s, background .15s;
     box-shadow: 0 12px 40px rgba(0,0,0,.4);
     position: relative;
 }
-.base-node .icon { font-size: 40px; filter: drop-shadow(0 0 12px var(--glow-color)); }
-.base-node .title { font-weight: 800; font-size: 17px; margin: 10px 0 4px; }
-.base-node .sub { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.base-node .icon { font-size: 32px; filter: drop-shadow(0 0 12px var(--glow-color)); }
+.base-node .title { font-weight: 800; font-size: 16px; margin: 8px 0 3px; }
+.base-node .sub { font-size: 11.5px; color: var(--text-secondary); margin-bottom: 4px; }
 .base-node.pinned { border-style: solid; border-color: rgba(16,185,129,.55); background: linear-gradient(165deg, #123b2e, var(--panel2)); box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 12px 40px rgba(0,0,0,.4); }
 .base-node.dragover { border-color: var(--primary-color); background: rgba(139,92,246,.1); transform: scale(1.02); }
 
 .base-node.summary-node {
-    width: 380px; max-width: 92vw; min-height: 160px;
+    width: 380px; max-width: 92vw; min-height: 140px;
     background: linear-gradient(165deg, #1a2332, var(--panel2));
     border: 2px dashed rgba(6,182,212,.5);
 }
 .base-node.summary-node.pinned { border-style: solid; border-color: rgba(6,182,212,.55); background: linear-gradient(165deg, #0f2a3a, var(--panel2)); }
-.base-node.summary-node .icon { font-size: 36px; filter: drop-shadow(0 0 12px rgba(6,182,212,.5)); }
+.base-node.summary-node .icon { font-size: 28px; filter: drop-shadow(0 0 12px rgba(6,182,212,.5)); }
 
-.mounted-card {
-    background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.4); border-radius: 12px;
-    padding: 16px; text-align: left; margin-top: 14px; position: relative;
+
+.base-node.sub-agent-node {
+    width: 380px; max-width: 92vw; min-height: 140px;
+    background: linear-gradient(165deg, #2a1f0e, var(--panel2));
+    border: 2px dashed rgba(245,158,11,.5);
 }
-.mounted-card .name { font-weight: 700; font-size: 15px; color: #6ee7b7; padding-right: 34px; }
-.mounted-card .meta { font-size: 12.5px; color: var(--text-secondary); margin-top: 6px; word-break: break-all; line-height: 1.6; }
+.base-node.sub-agent-node.pinned { border-style: solid; border-color: rgba(245,158,11,.55); background: linear-gradient(165deg, #2a1f0e, var(--panel2)); }
+.base-node.sub-agent-node .icon { font-size: 28px; filter: drop-shadow(0 0 12px rgba(245,158,11,.5)); }
+.base-node.sub-agent-node.dragover { border-color: #f59e0b; background: rgba(245,158,11,.1); transform: scale(1.02); }
+.mounted-card {
+    background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.4); border-radius: 10px;
+    padding: 10px 12px; text-align: left; margin-top: 8px; position: relative;
+    font-size: 12px;
+}
+.mounted-card .name { font-weight: 700; font-size: 13px; color: #6ee7b7; padding-right: 34px; }
+.mounted-card .meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; word-break: break-all; line-height: 1.4; }
 .mounted-card .meta .kv { display: flex; gap: 6px; }
 .mounted-card .meta .k { color: var(--text-secondary); min-width: 74px; flex-shrink: 0; }
 .mounted-card .meta .v { color: var(--text-primary); }
@@ -266,11 +276,17 @@ dialog[open] { animation: modalIn .18s ease; }
             <div class="sub">将右侧模型拖入此处，点「💾 保存」即为当前调用模型</div>
             <div id="mounted-area"></div>
         </div>
-        <div class="base-node summary-node" id="summary-node" style="margin-top: 30px;">
+        <div class="base-node summary-node" id="summary-node">
             <div class="icon">📋</div>
             <div class="title">摘要模型</div>
             <div class="sub">用于上下文管理和摘要生成（可选）</div>
             <div id="mounted-summary-area"></div>
+        </div>
+        <div class="base-node sub-agent-node" id="sub-agent-node">
+            <div class="icon">🤖</div>
+            <div class="title">子 Agent 模型</div>
+            <div class="sub">用于子代理任务执行（可选）</div>
+            <div id="mounted-sub-agent-area"></div>
         </div>
     </div>
 
@@ -354,6 +370,7 @@ const BASE = "/base";
 let models = [];          // 模型仓库列表
 let activeModelId = null; // 当前应在页面上展示的基座激活模型 id
 let activeSummaryModelId = null; // 摘要模型 id
+let activeSubAgentModelId = null; // 子 Agent 模型 id
 
 let isDirty = false;
 
@@ -361,6 +378,8 @@ const baseNodeEl = document.getElementById("base-node");
 const mountedAreaEl = document.getElementById("mounted-area");
 const summaryNodeEl = document.getElementById("summary-node");
 const mountedSummaryAreaEl = document.getElementById("mounted-summary-area");
+const subAgentNodeEl = document.getElementById("sub-agent-node");
+const mountedSubAgentAreaEl = document.getElementById("mounted-sub-agent-area");
 const saveStatusEl = document.getElementById("save-status");
 
 // ============ 通用 ============
@@ -400,6 +419,10 @@ function activeModel() {
 
 function activeSummaryModel() {
     return models.find(m => m.id === activeSummaryModelId) || null;
+}
+
+function activeSubAgentModel() {
+    return models.find(m => m.id === activeSubAgentModelId) || null;
 }
 
 // ============ 左侧基座节点渲染 ============
@@ -463,6 +486,37 @@ function clearActiveSummarySelection() {
     markDirty();
     showToast("已拔出摘要模型（未保存），点「💾 保存」生效");
 }
+
+function renderSubAgentNode() {
+    const m = activeSubAgentModel();
+    subAgentNodeEl.classList.toggle("pinned", !!m);
+    if (!m) {
+        mountedSubAgentAreaEl.innerHTML = `
+            <div class="empty-slot">（空）暂无子 Agent 模型<br>
+                <span class="arrow">👈</span> 拖一个模型到此处用于子代理任务</div>`;
+        return;
+    }
+    mountedSubAgentAreaEl.innerHTML = `
+        <div class="mounted-card">
+            <button class="unplug-btn" id="btn-unplug-sub-agent">拔出 ✕</button>
+            <div class="name">${escapeHtml(m.name)}</div>
+            <div class="meta">
+                <div class="kv"><span class="k">平台</span><span class="v">${escapeHtml(m.provider_type)}</span></div>
+                <div class="kv"><span class="k">模型名</span><span class="v">${escapeHtml(m.model_name)}</span></div>
+                <div class="kv"><span class="k">BaseURL</span><span class="v">${escapeHtml(m.base_url)}</span></div>
+            </div>
+        </div>`;
+    document.getElementById("btn-unplug-sub-agent").onclick = () => { clearActiveSubAgentSelection(); };
+}
+
+function clearActiveSubAgentSelection() {
+    activeSubAgentModelId = null;
+    renderSubAgentNode();
+    renderRepo();
+    markDirty();
+    showToast("已拔出子 Agent 模型（未保存），点「💾 保存」生效");
+}
+
 
 // ============ 右侧模型仓库 ============
 async function loadModelList() {
@@ -669,13 +723,38 @@ summaryNodeEl.addEventListener("drop", (e) => {
     showToast(`已挂载摘要模型「${m.name}」，点「💾 保存」生效`);
 });
 
+// ============ 拖拽挂载到子 Agent 模型节点 ============
+subAgentNodeEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    subAgentNodeEl.classList.add("dragover");
+});
+subAgentNodeEl.addEventListener("dragleave", () => {
+    subAgentNodeEl.classList.remove("dragover");
+});
+subAgentNodeEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    subAgentNodeEl.classList.remove("dragover");
+    const modelId = e.dataTransfer.getData("application/model-id");
+    if (!modelId) return;
+    const m = models.find(x => x.id === modelId);
+    if (!m) return;
+    activeSubAgentModelId = modelId;
+    renderSubAgentNode();
+    renderRepo();
+    markDirty();
+    showToast(`已挂载子 Agent 模型「${m.name}」，点「💾 保存」生效`);
+});
+
+
 // ============ 保存：把激活模型写库（保存即生效） ============
 document.getElementById("btn-save-active").onclick = async () => {
     const m = activeModel();
     const summaryM = activeSummaryModel();
-    if (!m && !summaryM) {
+    const subAgentM = activeSubAgentModel();
+    if (!m && !summaryM && !subAgentM) {
         setSaveStatus("没有可保存的挂载", "err");
-        showToast("请先从右侧拖一个模型到基座节点或摘要模型槽位", true);
+        showToast("请先从右侧拖一个模型到任意槽位", true);
         return;
     }
     setSaveStatus("保存中...", "saving");
@@ -696,11 +775,21 @@ document.getElementById("btn-save-active").onclick = async () => {
                 body: JSON.stringify({ model_id: activeSummaryModelId }),
             });
         }
+        // 保存子 Agent 模型
+        if (subAgentM) {
+            await req(`${BASE}/active/sub_agent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model_id: activeSubAgentModelId }),
+            });
+        }
         isDirty = false;
-        let msg = "已保存";
-        if (m) msg += `基座模型「${m.name}」`;
-        if (m && summaryM) msg += "和";
-        if (summaryM) msg += `摘要模型「${summaryM.name}」`;
+        let msg = "已保存 ";
+        const parts = [];
+        if (m) parts.push(`基座「${m.name}」`);
+        if (summaryM) parts.push(`摘要「${summaryM.name}」`);
+        if (subAgentM) parts.push(`子Agent「${subAgentM.name}」`);
+        msg += parts.join(" + ");
         setSaveStatus(msg, "ok");
         showToast(msg + "已生效");
     } catch (e) {
@@ -817,10 +906,17 @@ async function init() {
     } catch (e) {
         console.error("加载摘要模型失败:", e);
     }
+    try {
+        const activeSubAgent = await req(`${BASE}/active/sub_agent`);
+        if (activeSubAgent) activeSubAgentModelId = activeSubAgent.id;
+    } catch (e) {
+        console.error("加载子 Agent 模型失败:", e);
+    }
     await loadModelList();
     renderBaseNode();
     renderSummaryNode();
-    setSaveStatus(activeModelId || activeSummaryModelId ? "已加载" : "", "ok");
+    renderSubAgentNode();
+    setSaveStatus(activeModelId || activeSummaryModelId || activeSubAgentModelId ? "已加载" : "", "ok");
 }
 
 window.addEventListener("beforeunload", (e) => {

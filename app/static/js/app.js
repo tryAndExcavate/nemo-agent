@@ -44,6 +44,600 @@ createApp({
         let abortController = null;
         let lastStreamEventId = sessionStorage.getItem('lastStreamEventId') || '0';  // Redis Stream 位置，跨刷新保留
 
+        // ===== 任务模式状态 =====
+        const modeType = ref('chat');  // 'chat' | 'task'
+        const showAgentDrawer = ref(false);
+        const currentChatAgent = computed(() => agents.value.find(a => a.id === selectedAgent.value) || agents.value[0]);
+        const inputPlaceholder = computed(() => {
+            if (modeType.value === 'task') return '描述任务目标，或选择下方模板…';
+            return '输入消息…（支持 Markdown，Shift+Enter 换行）';
+        });
+
+        // 任务数据
+        const task = ref({ status: 'idle', goal: '', steps: [], finalOutput: '', context: { used: 0, max: 8000 }, contextUsage: null });
+        const taskGoalDraft = ref('');
+        const editingTaskGoal = ref(false);
+        // 任务对话消息
+        const taskMessages = ref([]);  // [{role:'user'|'ai', content:'', steps:[], usage:null, _showSteps:false}]
+        const taskInput = ref('');
+        const taskInputSending = ref(false);
+        const tmBody = ref(null);
+        const tmChatArea = ref(null);
+        const taskInputRef = ref(null);
+        const taskTemplates = ref([
+            '梳理项目接口文档并生成变更清单',
+            '分析代码库中的潜在安全漏洞',
+            '为项目编写单元测试',
+            '重构指定模块的代码结构'
+        ]);
+        const workspaces = ref([
+            { id: 'ws1', name: '当前项目', path: '.' },
+        ]);
+        const selectedWorkspaceId = ref('ws1');
+        const selectedWorkspace = computed(() => workspaces.value.find(w => w.id === selectedWorkspaceId.value));
+        const showWorkspaceMenu = ref(false);
+        const showFileTree = ref(false);
+
+        // 目录浏览器状态
+        const showDirBrowser = ref(false);
+        const dirBrowserPath = ref('.');
+        const dirBrowserItems = ref([]);
+        const dirBrowserLoading = ref(false);
+        const dirBrowserError = ref('');
+        const workspaceFileTree = ref([]);
+
+        // 任务列表状态
+        const taskList = ref([]);
+        const taskListLoading = ref(false);
+
+        const taskStatusLabel = computed(() => {
+            const map = { idle: '待执行', executing: '执行中', paused: '已暂停', done: '已完成', error: '出错' };
+            return map[task.value.status] || task.value.status;
+        });
+        const taskContextPercent = computed(() => Math.round((task.value.context.used / task.value.context.max) * 100));
+        const taskContextLevelClass = computed(() => {
+            const p = taskContextPercent.value;
+            if (p > 80) return 'high';
+            if (p > 50) return 'mid';
+            return 'low';
+        });
+
+        function formatK(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+        function ctxBarWidth(key) {
+            const u = task.value.contextUsage;
+            if (!u || !u.total) return '0%';
+            return Math.round((u[key] || 0) / u.total * 100) + '%';
+        }
+        function ctxPct(key) {
+            const u = task.value.contextUsage;
+            if (!u || !u.total) return '0';
+            return Math.round((u[key] || 0) / u.total * 100);
+        }
+        const ctxTooltipStyle = ref({});
+        const ctxTooltipVisible = ref(false);
+        function showCtxTooltip(e) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            ctxTooltipStyle.value = {
+                position: 'fixed',
+                top: (rect.bottom + 6) + 'px',
+                left: rect.left + 'px',
+                zIndex: 200,
+            };
+            ctxTooltipVisible.value = true;
+        }
+        function hideCtxTooltip() {
+            ctxTooltipVisible.value = false;
+        }
+        function formatToolIO(io) { return io ? (typeof io === 'string' ? io : JSON.stringify(io, null, 2)) : ''; }
+        function switchToChatMode() { modeType.value = 'chat'; showAgentDrawer.value = false; }
+        function switchToTaskMode() { modeType.value = 'task'; currentStatus.value = 'tasks'; loadTaskList(); }
+        function chooseSubAgent(id) { selectedAgent.value = id; showAgentDrawer.value = false; modeType.value = 'chat'; }
+        function getAgentDesc(id) {
+            const map = { chat: '智能问答', file: '文件分析', ppt: 'PPT生成', deep: '深度研究', skills: '技能助手' };
+            return map[id] || '';
+        }
+        let _taskAbortController = null;
+        let _currentStep = null;
+        let _currentAiMsg = null;
+
+        function selectWorkspace(id) { selectedWorkspaceId.value = id; showWorkspaceMenu.value = false; showDirBrowser.value = false; }
+
+        async function openDirBrowser() {
+            showWorkspaceMenu.value = false;
+            showDirBrowser.value = true;
+            dirBrowserLoading.value = true;
+            dirBrowserError.value = '';
+            // 初始路径：用户主目录
+            const home = navigator.userAgent.includes('Windows')
+                ? (await _fetchDirs('C:\\\\Users')).path || 'C:\\'
+                : (await _fetchDirs('/home')).path || '/';
+            dirBrowserPath.value = home;
+            await _loadDirItems(home);
+        }
+
+        async function _fetchDirs(path) {
+            try {
+                const resp = await fetch('/api/directories?path=' + encodeURIComponent(path));
+                return await resp.json();
+            } catch (e) {
+                return { path, items: [], error: e.message };
+            }
+        }
+
+        async function _loadDirItems(path) {
+            dirBrowserLoading.value = true;
+            dirBrowserError.value = '';
+            const data = await _fetchDirs(path);
+            dirBrowserPath.value = data.path || path;
+            dirBrowserItems.value = data.items || [];
+            dirBrowserError.value = data.error || '';
+            dirBrowserLoading.value = false;
+        }
+
+        async function dirBrowserNavigate(path) { await _loadDirItems(path); }
+
+        async function dirBrowserGoUp() {
+            const cur = dirBrowserPath.value;
+            const sep = cur.includes('\\') ? '\\' : '/';
+            const parts = cur.split(sep).filter(Boolean);
+            if (parts.length <= 1) return;
+            parts.pop();
+            const parent = parts.join(sep) || sep;
+            await _loadDirItems(parent);
+        }
+
+        let _pendingEditWsId = null;
+
+        function editWorkspace(ws) {
+            showWorkspaceMenu.value = false;
+            showDirBrowser.value = true;
+            dirBrowserPath.value = ws.path;
+            _pendingEditWsId = ws.id;
+            _loadDirItems(ws.path);
+        }
+
+        function dirBrowserConfirm() {
+            const path = dirBrowserPath.value;
+            const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+            if (_pendingEditWsId) {
+                const ws = workspaces.value.find(w => w.id === _pendingEditWsId);
+                if (ws) { ws.name = name; ws.path = path; }
+                _pendingEditWsId = null;
+            } else {
+                const exists = workspaces.value.find(w => w.path === path);
+                if (exists) {
+                    selectedWorkspaceId.value = exists.id;
+                } else {
+                    const id = 'ws-' + Date.now();
+                    workspaces.value.push({ id, name, path });
+                    selectedWorkspaceId.value = id;
+                }
+            }
+            showDirBrowser.value = false;
+        }
+
+        function removeWorkspace(id) {
+            workspaces.value = workspaces.value.filter(w => w.id !== id);
+            if (selectedWorkspaceId.value === id) {
+                selectedWorkspaceId.value = workspaces.value.length > 0 ? workspaces.value[0].id : '';
+            }
+        }
+
+        async function startTask() {
+            const goal = taskGoalDraft.value.trim();
+            const ws = workspaces.value.find(w => w.id === selectedWorkspaceId.value);
+            if (!goal || !ws) return;
+
+            // 生成会话 ID
+            const convId = 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+            // 初始化 task 状态
+            task.value = {
+                status: 'executing', goal, steps: [], finalOutput: '', contextUsage: null,
+                context: { used: 0, max: 8000 }, conversationId: convId,
+                workspacePath: ws.path
+            };
+            _currentStep = null;
+            taskGoalDraft.value = '';
+            // 初始化对话消息
+            taskMessages.value = [{ role: 'user', content: goal, steps: [], usage: null, _showSteps: false }];
+            localStorage.setItem('lastTaskConvId', convId);
+
+            try {
+                // 1. POST 启动任务
+                await fetch('/agent/task/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ goal, conversation_id: convId, workspace_path: ws.path })
+                });
+
+                // 2. 连接 SSE 读取流
+                _taskAbortController = new AbortController();
+                const sseUrl = `/agent/task/stream?conversationId=${convId}`;
+                const resp = await fetch(sseUrl, { signal: _taskAbortController.signal });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let shouldStop = false;
+
+                while (!shouldStop) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const raw = line.slice(6).trim();
+                        if (!raw || raw === '[DONE]') continue;
+                        try {
+                            const evt = JSON.parse(raw);
+                            _handleTaskEvent(evt);
+                            if (evt.type === 'done') { shouldStop = true; break; }
+                        } catch(e) {}
+                    }
+                }
+                // 收到 done 后立即关闭连接，不等后端超时
+                reader.cancel();
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    task.value.status = 'error';
+                    task.value.finalOutput = '任务启动失败: ' + e.message;
+                }
+            }
+        }
+
+        function _handleTaskEvent(evt) {
+            const t = task.value;
+            if (!t || t.status === 'idle') return;
+
+            switch (evt.type) {
+                case 'text': {
+                    const text = evt.content || '';
+                    if (_currentStep) {
+                        _currentStep.output = (_currentStep.output || '') + text;
+                        if (!_currentStep._titleSet && _currentStep.output.trim().length > 5) {
+                            const preview = _currentStep.output.trim().replace(/\n/g, ' ').substring(0, 20);
+                            _currentStep.title = preview + (preview.length >= 20 ? '...' : '');
+                            _currentStep._titleSet = true;
+                        }
+                    } else {
+                        _createStep('分析中...');
+                        _currentStep.output = text;
+                    }
+                    // 追踪 AI 对话消息
+                    if (!_currentAiMsg) {
+                        _currentAiMsg = { role: 'ai', content: '', steps: [], usage: null, _showSteps: false };
+                        taskMessages.value.push(_currentAiMsg);
+                    }
+                    _currentAiMsg.content += text;
+                    scrollTaskToBottom();
+                    break;
+                }
+                case 'tool_start': {
+                    if (!_currentStep) {
+                        const toolLabel = { list_files: '列出文件', read_file: '读取文件', write_file: '写入文件', edit_file: '编辑文件', grep: '搜索内容', bash: '执行命令', glob_files: '匹配文件', load_skill: '加载技能', loadContent: '加载文件内容' };
+                        _createStep(toolLabel[evt.tool] || '调用 ' + (evt.tool || ''));
+                    }
+                    const toolItem = {
+                        type: 'tool', toolName: evt.tool || '',
+                        input: evt.data?.input || '', output: '', status: 'running'
+                    };
+                    if (!_currentStep.timeline) _currentStep.timeline = [];
+                    _currentStep.timeline.push(toolItem);
+                    _currentStep._activeTool = toolItem;
+                    // 追踪到 AI 消息（含 input 数据）
+                    if (_currentAiMsg) {
+                        _currentAiMsg.steps.push({ name: evt.tool || '', input: evt.data?.input || null, output: null, status: 'running' });
+                    }
+                    break;
+                }
+                case 'tool_result': {
+                    if (_currentStep && _currentStep._activeTool) {
+                        _currentStep._activeTool.output = evt.data?.content || '';
+                        _currentStep._activeTool.status = evt.data?.is_error ? 'error' : 'completed';
+                        _currentStep._activeTool = null;
+                    }
+                    // 更新 AI 消息的步骤状态 + 输出
+                    if (_currentAiMsg && _currentAiMsg.steps.length > 0) {
+                        const lastStep = _currentAiMsg.steps[_currentAiMsg.steps.length - 1];
+                        if (lastStep.status === 'running') {
+                            lastStep.status = evt.data?.is_error ? 'error' : 'success';
+                            lastStep.output = evt.data?.content || '';
+                        }
+                    }
+                    break;
+                }
+                case 'llm_input': {
+                    if (!_currentStep) _createStep('LLM 调用 #' + (evt.data?.turn || ''));
+                    if (_currentStep && evt.data) {
+                        if (!_currentStep.llmMonitor) _currentStep.llmMonitor = { input: null, output: null };
+                        _currentStep.llmMonitor.input = evt.data;
+                    }
+                    // 捕获上下文用量
+                    if (evt.data?.context_usage) {
+                        t.contextUsage = evt.data.context_usage;
+                        t.context.used = evt.data.context_usage.total || 0;
+                    }
+                    break;
+                }
+                case 'llm_output': {
+                    if (_currentStep && evt.data) {
+                        if (!_currentStep.llmMonitor) _currentStep.llmMonitor = { input: null, output: null };
+                        _currentStep.llmMonitor.output = evt.data;
+                    }
+                    break;
+                }
+                case 'message_complete': {
+                    if (_currentStep) {
+                        _currentStep.status = 'success';
+                        if (evt.usage) {
+                            _currentStep.usage = evt.usage;
+                        }
+                    }
+                    _currentStep = null;
+                    // 保存 usage 到 AI 消息
+                    if (_currentAiMsg && evt.usage) {
+                        _currentAiMsg.usage = evt.usage;
+                    }
+                    break;
+                }
+                case 'error': {
+                    if (_currentStep) {
+                        _currentStep.status = 'error';
+                        if (!_currentStep.timeline) _currentStep.timeline = [];
+                        _currentStep.timeline.push({ type: 'error', message: evt.content || '未知错误' });
+                    } else {
+                        _createStep('错误');
+                        _currentStep.status = 'error';
+                        _currentStep.output = evt.content || '';
+                    }
+                    t.status = 'error';
+                    t.finalOutput = evt.content || '任务执行出错';
+                    break;
+                }
+                case 'info': {
+                    if (!_currentStep) _createStep(evt.content || '处理中');
+                    break;
+                }
+                case 'done': {
+                    t.status = 'done';
+                    if (_currentStep) {
+                        _currentStep.status = 'success';
+                    }
+                    const lastStepWithOutput = [...t.steps].reverse().find(s => s.output && s.output.trim());
+                    t.finalOutput = lastStepWithOutput ? lastStepWithOutput.output : (t.finalOutput || '任务已完成');
+                    _currentStep = null;
+                    _currentAiMsg = null;
+                    taskInputSending.value = false;
+                    _taskAbortController = null;
+                    scrollTaskToBottom();
+                    break;
+                }
+            }
+        }
+
+        function _createStep(title) {
+            const step = {
+                id: 'step-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+                title, status: 'running', collapsed: false, showTimeline: false,
+                timeline: [], output: '', usage: null, _titleSet: false, llmMonitor: null
+            };
+            task.value.steps.push(step);
+            _currentStep = step;
+        }
+
+        function pauseTask() { task.value.status = 'paused'; }
+        function resumeTask() { task.value.status = 'executing'; }
+
+        function stopTask() {
+            if (_taskAbortController) { _taskAbortController.abort(); _taskAbortController = null; }
+            // 通知后端停止
+            const convId = task.value.conversationId;
+            if (convId) {
+                fetch('/agent/task/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conversation_id: convId })
+                }).catch(() => {});
+            }
+            task.value.status = 'done';
+            task.value.finalOutput = '任务已终止';
+        }
+
+        function resetTask() {
+            if (_taskAbortController) { _taskAbortController.abort(); _taskAbortController = null; }
+            _currentStep = null;
+            _currentAiMsg = null;
+            task.value = { status: 'idle', goal: '', steps: [], finalOutput: '', context: { used: 0, max: 8000 }, contextUsage: null };
+            taskGoalDraft.value = '';
+            taskMessages.value = [];
+            taskInput.value = '';
+            taskInputSending.value = false;
+            localStorage.removeItem('lastTaskConvId');
+        }
+
+        function scrollTaskToBottom() {
+            nextTick(() => {
+                const el = tmBody.value || tmChatArea.value;
+                if (el) el.scrollTop = el.scrollHeight;
+            });
+        }
+
+        async function sendTaskMessage() {
+            const text = taskInput.value.trim();
+            if (!text || taskInputSending.value) return;
+            const convId = task.value.conversationId;
+            if (!convId) return;
+
+            // 添加用户消息
+            taskMessages.value.push({ role: 'user', content: text, steps: [], usage: null, _showSteps: false });
+            taskInput.value = '';
+            taskInputSending.value = true;
+            scrollTaskToBottom();
+
+            // 重置步骤追踪
+            task.value.steps = [];
+            _currentStep = null;
+            _currentAiMsg = null;
+            _taskAbortController = null;
+
+            // 通知后端继续对话
+            try {
+                // 先停止旧的 SSE 连接
+                if (_taskAbortController) { _taskAbortController.abort(); _taskAbortController = null; }
+                // 通知后端停止旧任务
+                await fetch('/agent/task/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conversation_id: convId })
+                }).catch(() => {});
+
+                task.value.status = 'executing';
+
+                // 启动新任务（复用 conversationId，后端会从 JSONL 恢复上下文）
+                await fetch('/agent/task/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ goal: text, conversation_id: convId, workspace_path: task.value.workspacePath || '.' })
+                });
+
+                // 连接 SSE
+                _taskAbortController = new AbortController();
+                const sseUrl = `/agent/task/stream?conversationId=${convId}`;
+                const resp = await fetch(sseUrl, { signal: _taskAbortController.signal });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let shouldStop = false;
+
+                while (!shouldStop) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const raw = line.slice(6).trim();
+                        if (!raw || raw === '[DONE]') continue;
+                        try {
+                            const evt = JSON.parse(raw);
+                            _handleTaskEvent(evt);
+                            if (evt.type === 'done') { shouldStop = true; break; }
+                        } catch(e) {}
+                    }
+                }
+                reader.cancel();
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    taskInputSending.value = false;
+                }
+            }
+        }
+
+        async function loadTaskList() {
+            taskListLoading.value = true;
+            try {
+                const resp = await fetch('/agent/task/list');
+                const data = await resp.json();
+                taskList.value = data.tasks || [];
+            } catch (e) { taskList.value = []; }
+            taskListLoading.value = false;
+        }
+
+        function loadTaskRecord(convId) {
+            currentChatId.value = null;
+            modeType.value = 'task';
+            task.value = { status: 'done', goal: '加载中...', steps: [], finalOutput: '', context: { used: 0, max: 8000 }, conversationId: convId, workspacePath: '' };
+            taskMessages.value = [];
+            fetch('/agent/task/load?conversationId=' + encodeURIComponent(convId))
+                .then(r => r.json())
+                .then(data => {
+                    const meta = data.meta || {};
+                    const msgs = data.messages || [];
+                    // 从元数据恢复状态：优先采用最后一次 LLM 调用的上下文窗口明细(ctx_*)，
+                    // 与实时执行时 llm_input 携带的 context_usage 口径一致；老任务无 ctx_* 时回退到累计 usage
+                    const ctxParts = {
+                        system_prompt: meta.ctx_system_tokens || 0,
+                        history: meta.ctx_history_tokens || 0,
+                        tool_definitions: meta.ctx_tool_def_tokens || 0,
+                        tool_results: meta.ctx_tool_result_tokens || 0,
+                        current_input: meta.ctx_input_tokens || 0,
+                    };
+                    const ctxTotal = ctxParts.system_prompt + ctxParts.history +
+                        ctxParts.tool_definitions + ctxParts.tool_results + ctxParts.current_input;
+                    const usageTotal = (meta.total_input_tokens || 0) + (meta.total_output_tokens || 0);
+                    const usedTokens = ctxTotal || usageTotal;
+                    const hasCtx = ctxTotal > 0 || usageTotal > 0;
+                    task.value = {
+                        status: meta.status || 'done',
+                        goal: meta.goal || '',
+                        steps: [],
+                        finalOutput: '',
+                        context: { used: usedTokens, max: 8000 },
+                        contextUsage: hasCtx ? {
+                            system_prompt: ctxParts.system_prompt,
+                            history: ctxParts.history,
+                            tool_definitions: ctxParts.tool_definitions,
+                            tool_results: ctxParts.tool_results,
+                            current_input: ctxParts.current_input,
+                            total: ctxTotal || usageTotal,
+                        } : null,
+                        conversationId: convId,
+                        workspacePath: meta.workspace_path || '',
+                    };
+                    // 从消息恢复 goal（如果元数据没有）
+                    if (!task.value.goal) {
+                        const userMsg = msgs.find(m => m.type === 'user');
+                        if (userMsg) task.value.goal = userMsg.content || '未命名任务';
+                    }
+                    // 构建对话消息
+                    const loadedMsgs = [];
+                    for (const m of msgs) {
+                        if (m.type === 'user') {
+                            loadedMsgs.push({ role: 'user', content: m.content || '', steps: [], usage: null, _showSteps: false });
+                        } else if (m.type === 'assistant') {
+                            let text = '';
+                            if (Array.isArray(m.content)) {
+                                text = m.content.filter(b => b.type === 'text').map(b => b.text).join('');
+                            }
+                            if (text) loadedMsgs.push({ role: 'ai', content: text, steps: [], usage: null, _showSteps: false });
+                        }
+                    }
+                    taskMessages.value = loadedMsgs;
+                    // finalOutput
+                    const assistantMsgs = msgs.filter(m => m.type === 'assistant');
+                    const texts = assistantMsgs.map(m => {
+                        if (Array.isArray(m.content)) {
+                            return m.content.filter(b => b.type === 'text').map(b => b.text).join('');
+                        }
+                        return '';
+                    }).filter(Boolean);
+                    task.value.finalOutput = texts.length > 0 ? texts.join('\n\n') : '共 ' + msgs.length + ' 条消息';
+                });
+        }
+
+        async function deleteTaskRecord(convId) {
+            try {
+                await fetch('/agent/task/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conversation_id: convId })
+                });
+                // 刷新列表
+                await loadTaskList();
+                // 如果当前显示的是被删除的任务，重置面板
+                if (task.value.conversationId === convId) resetTask();
+            } catch (e) { console.error('删除任务失败:', e); }
+        }
+
+        function toggleStepTimeline(stepId) {
+            const step = task.value.steps.find(s => s.id === stepId);
+            if (step) step.showTimeline = !step.showTimeline;
+        }
+        function closeAllPopups() { showAgentDrawer.value = false; showWorkspaceMenu.value = false; }
+
         // ===== 初始化：只加载一次会话列表 =====
         onMounted(async () => {
             APP_UTILS.setupMarkdown();
@@ -53,6 +647,12 @@ createApp({
                 await selectChat(chatList.value[0].id);
             } else {
                 createNewChat();
+            }
+
+            // 恢复上次的任务状态
+            const lastTaskConvId = localStorage.getItem('lastTaskConvId');
+            if (lastTaskConvId) {
+                loadTaskRecord(lastTaskConvId);
             }
 
             // ===== 侧边栏拖拽调整宽度 =====
@@ -1370,16 +1970,14 @@ createApp({
         const filteredChatList = computed(() => chatList.value);
 
         const switchTab = async (status) => {
-            console.log('switchTab 被调用，status:', status);
             currentStatus.value = status;
             if (status === 'active') {
-                console.log('加载活跃会话...');
                 await loadChatsFromStorage();
-            } else {
-                console.log('加载归档会话...');
+            } else if (status === 'archived') {
                 await loadArchivedChatsFromStorage();
+            } else if (status === 'tasks') {
+                await loadTaskList();
             }
-            console.log('加载完成，chatList:', chatList.value.length);
         };
 
         const startRename = (chatId, event) => {
@@ -1848,7 +2446,20 @@ createApp({
             editingMessageId, editText, createBranch, showAccordion,
             startEditMessage, cancelEditMessage, submitEdit,
             regenerateMessage, switchToBranch, loadSiblingBranches,
-            prevBranch, nextBranch, addBranchAtCurrentLevel
+            prevBranch, nextBranch, addBranchAtCurrentLevel,
+            // 任务模式
+            modeType, showAgentDrawer, currentChatAgent, inputPlaceholder,
+            task, taskGoalDraft, editingTaskGoal, taskTemplates,
+            workspaces, selectedWorkspaceId, selectedWorkspace, showWorkspaceMenu,
+            showDirBrowser, dirBrowserPath, dirBrowserItems, dirBrowserLoading, dirBrowserError,
+            openDirBrowser, dirBrowserNavigate, dirBrowserGoUp, dirBrowserConfirm,
+            showFileTree, workspaceFileTree, taskStatusLabel, taskContextPercent, taskContextLevelClass,
+            formatK, formatToolIO, switchToChatMode, switchToTaskMode, chooseSubAgent, getAgentDesc,
+            selectWorkspace, editWorkspace, removeWorkspace, startTask, pauseTask, resumeTask, stopTask, resetTask,
+            toggleStepTimeline, closeAllPopups,
+            taskList, taskListLoading, loadTaskList, loadTaskRecord, deleteTaskRecord,
+            taskMessages, taskInput, taskInputSending, tmBody, tmChatArea, taskInputRef, sendTaskMessage, scrollTaskToBottom,
+            ctxBarWidth, ctxPct, ctxTooltipStyle, ctxTooltipVisible, showCtxTooltip, hideCtxTooltip
         };
     }
 }).mount('#app');

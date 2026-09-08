@@ -94,6 +94,16 @@ class ActiveSummaryModelDB(SQLModel, table=True):
     model_id: str | None = None
 
 
+class ActiveSubAgentModelDB(SQLModel, table=True):
+    """子 Agent 模型挂载槽位，用于子代理任务执行。
+
+    key 固定为 "active_sub_agent"。独立于基座和摘要模型，可单独配置。
+    """
+
+    key: str = Field(primary_key=True)
+    model_id: str | None = None
+
+
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
 SQLModel.metadata.create_all(engine)
 
@@ -235,3 +245,28 @@ class ConfigStore:
                     s.delete(row)
                     s.commit()
         logger.info("拔出摘要模型")
+
+    @staticmethod
+    def get_active_sub_agent_model_id() -> str | None:
+        with _lock:
+            with Session(engine) as s:
+                row = s.get(ActiveSubAgentModelDB, "active_sub_agent")
+                return row.model_id if row else None
+
+    @staticmethod
+    def set_active_sub_agent_model_id(model_id: str):
+        with _lock:
+            with Session(engine) as s:
+                s.merge(ActiveSubAgentModelDB(key="active_sub_agent", model_id=model_id))
+                s.commit()
+        logger.info(f"设置子 Agent 模型: {model_id}")
+
+    @staticmethod
+    def clear_active_sub_agent_model():
+        with _lock:
+            with Session(engine) as s:
+                row = s.get(ActiveSubAgentModelDB, "active_sub_agent")
+                if row:
+                    s.delete(row)
+                    s.commit()
+        logger.info("拔出子 Agent 模型")

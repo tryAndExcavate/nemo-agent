@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>豆豆 · 任务模式 Demo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<style>
+/* =========================================================
+   基础主题变量（深色科技风）
+   ========================================================= */
+:root {
+  --bg-primary: #0b0f16;
+  --bg-secondary: #131a24;
+  --bg-tertiary: #1b2430;
+  --border-color: #263041;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b96a5;
+  --text-muted: #5b6674;
+  --primary-color: #10b981;
+  --primary-light: #6ee7b7;
+  --primary-dim: rgba(16,185,129,.12);
+  --task-color: #6366f1;
+  --task-light: #a5b4fc;
+  --task-dim: rgba(99,102,241,.12);
+  --warn-color: #f59e0b;
+  --danger-color: #ef4444;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* 光晕效果 */
+.glow-effect { position: fixed; border-radius: 50%; filter: blur(90px); opacity: .12; pointer-events: none; z-index: 0; }
+.glow-effect-1 { width: 400px; height: 400px; background: var(--primary-color); top: -100px; left: -100px; }
+.glow-effect-2 { width: 350px; height: 350px; background: var(--task-color); bottom: -100px; right: -50px; }
+.glow-effect-3 { width: 300px; height: 300px; background: #f59e0b; top: 40%; right: 20%; }
+
+#app { position: relative; z-index: 1; height: 100vh; }
+.container { display: flex; height: 100vh; }
+
+/* =========================================================
+   侧边栏
+   ========================================================= */
+.sidebar {
+  width: 260px; flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  display: flex; flex-direction: column;
+}
+.sidebar-header { padding: 16px; border-bottom: 1px solid var(--border-color); }
+.app-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; margin-bottom: 14px; }
+.logo-icon { font-size: 20px; }
+.new-chat-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--primary-color); color: #062a1c; border: none;
+  padding: 9px; border-radius: 8px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  transition: filter .2s; margin-bottom: 12px;
+}
+.new-chat-btn:hover { filter: brightness(1.1); }
+.tab-switch { display: flex; background: var(--bg-tertiary); border-radius: 8px; padding: 3px; }
+.tab-switch .tab { flex: 1; text-align: center; padding: 6px; font-size: 12.5px; border-radius: 6px; cursor: pointer; color: var(--text-secondary); }
+.tab-switch .tab.active { background: var(--bg-secondary); color: var(--text-primary); }
+
+.chat-list { flex: 1; overflow-y: auto; padding: 8px; }
+.chat-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 3px;
+  font-size: 13px; color: var(--text-secondary); position: relative;
+}
+.chat-item:hover { background: var(--bg-tertiary); }
+.chat-item.active { background: var(--primary-dim); color: var(--primary-light); }
+.chat-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rename-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--primary-color); color: var(--text-primary); border-radius: 4px; padding: 3px 6px; font-size: 13px; }
+.chat-actions { display: none; gap: 4px; }
+.chat-item:hover .chat-actions { display: flex; }
+.action-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 11.5px; }
+.action-btn:hover { background: rgba(255,255,255,.08); color: var(--text-primary); }
+.dropdown-menu { position: absolute; right: 0; top: 100%; z-index: 10; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 4px; box-shadow: 0 8px 20px rgba(0,0,0,.4); min-width: 130px; }
+.dropdown-item { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; color: var(--text-secondary); padding: 7px 9px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-align: left; }
+.dropdown-item:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.archive-item:hover { color: var(--warn-color); }
+
+.sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border-color); }
+.model-info { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted); }
+
+/* =========================================================
+   主聊天区
+   ========================================================= */
+.main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.top-decoration { height: 2px; }
+.decoration-line { height: 100%; background: linear-gradient(90deg, transparent, var(--primary-color), var(--task-color), transparent); opacity: .5; }
+
+.messages-container { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
+.empty-icon-wrapper { position: relative; margin-bottom: 16px; }
+.empty-icon { font-size: 52px; }
+.empty-state h2 { margin: 0 0 6px; }
+.empty-state p { color: var(--text-secondary); margin: 0 0 24px; }
+.quick-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.quick-action {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  padding: 10px 16px; border-radius: 10px; cursor: pointer; font-size: 13px; color: var(--text-secondary);
+  transition: .2s;
+}
+.quick-action:hover { border-color: var(--primary-color); color: var(--primary-light); }
+
+.message { display: flex; gap: 12px; margin-bottom: 22px; max-width: 780px; }
+.message.user { margin-left: auto; flex-direction: row-reverse; }
+.message-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; }
+.message-content { flex: 1; min-width: 0; position: relative; }
+.user-message { background: var(--primary-dim); border: 1px solid rgba(16,185,129,.25); padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
+.ai-message { position: relative; }
+.text-content { font-size: 14px; line-height: 1.7; }
+.text-content p { margin: 0 0 10px; }
+.text-content code { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--text-muted); cursor: pointer; margin-top: 6px; font-size: 12px; }
+.copy-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.message-actions { margin-top: 6px; }
+.message-actions .action-btn { border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 9px; }
+
+.thinking-loading { display: flex; gap: 4px; padding: 6px 0; }
+.thinking-loading .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); animation: bounce 1.2s infinite; }
+.thinking-loading .dot:nth-child(2) { animation-delay: .15s; }
+.thinking-loading .dot:nth-child(3) { animation-delay: .3s; }
+@keyframes bounce { 0%,60%,100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+/* 思考过程时间线（对话模式下 & 任务模式下共用） */
+.timeline-section { margin-bottom: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; }
+.timeline-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; font-size: 12.5px; color: var(--text-secondary); }
+.timeline-header:hover { background: var(--bg-tertiary); }
+.timeline-main-icon { color: var(--task-light); }
+.timeline-title { flex: 1; font-weight: 600; }
+.timeline-content { padding: 4px 14px 12px; }
+.timeline-item { display: flex; gap: 10px; padding: 6px 0; }
+.timeline-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; background: var(--text-muted); }
+.timeline-dot.thinking { background: var(--task-color); }
+.timeline-dot.running { background: var(--warn-color); }
+.timeline-dot.completed { background: var(--primary-color); }
+.timeline-dot.error { background: var(--danger-color); }
+.timeline-item-body { flex: 1; min-width: 0; }
+.timeline-thinking { color: var(--text-secondary); font-style: italic; font-size: 12.5px; line-height: 1.6; }
+.timeline-tool { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.timeline-tool-icon { color: var(--task-light); }
+.timeline-tool-name { font-weight: 600; color: var(--text-primary); }
+.timeline-tool-status { margin-left: auto; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; }
+.timeline-tool-status.running { background: var(--task-dim); color: var(--task-light); }
+.timeline-tool-status.completed { background: var(--primary-dim); color: var(--primary-light); }
+.timeline-tool-status.error { background: rgba(239,68,68,.15); color: var(--danger-color); }
+.timeline-error { display: flex; align-items: center; gap: 8px; color: var(--danger-color); font-size: 12.5px; }
+
+.usage-bar { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); margin-top: 8px; }
+.usage-icon { color: var(--warn-color); }
+
+/* =========================================================
+   任务模式：模式选择区（替换原来 5 个并列的 agent-selector）
+   ========================================================= */
+.input-area { border-top: 1px solid var(--border-color); padding: 14px 20px 18px; background: var(--bg-secondary); }
+
+.mode-selector { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; position: relative; }
+.tm-chat-cluster { position: relative; display: flex; align-items: center; }
+
+.tm-mode-pill {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--bg-tertiary); border: 1px solid var(--border-color);
+  color: var(--text-secondary); padding: 8px 15px; border-radius: 999px;
+  cursor: pointer; font-size: 13px; font-weight: 600; transition: all .2s;
+}
+.tm-mode-pill:hover { border-color: #37455a; color: var(--text-primary); }
+.tm-chat-pill { border-radius: 999px 0 0 999px; padding-right: 12px; }
+.tm-chat-pill.active { background: var(--primary-dim); border-color: var(--primary-color); color: var(--primary-light); }
+.tm-task-pill.active { background: var(--task-dim); border-color: var(--task-color); color: var(--task-light); }
+
+.tm-drawer-toggle-btn {
+  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-left: none;
+  color: var(--text-secondary); width: 30px; height: 37px; border-radius: 0 999px 999px 0;
+  cursor: pointer; transition: .2s;
+}
+.tm-drawer-toggle-btn i { font-size: 11px; transition: transform .25s; }
+.tm-drawer-toggle-btn.open i { transform: rotate(180deg); }
+
+.tm-mode-divider { width: 1px; height: 20px; background: var(--border-color); }
+
+.tm-running-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--task-color); box-shadow: 0 0 0 3px rgba(99,102,241,.25); animation: tm-pulse 1.4s infinite; }
+@keyframes tm-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.tm-agent-drawer {
+  position: absolute; bottom: 46px; left: 0; width: 260px;
+  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5); padding: 8px; z-index: 30;
+}
+.tm-agent-drawer-title { font-size: 11.5px; color: var(--text-muted); padding: 6px 10px 8px; }
+.tm-agent-drawer-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer; transition: background .15s; }
+.tm-agent-drawer-item:hover { background: var(--bg-secondary); }
+.tm-agent-drawer-item.active { background: var(--primary-dim); }
+.tm-adi-icon { font-size: 18px; width: 26px; text-align: center; flex-shrink: 0; }
+.tm-adi-text { flex: 1; min-width: 0; }
+.tm-adi-name { display: block; font-size: 13px; color: var(--text-primary); font-weight: 500; }
+.tm-adi-desc { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.tm-adi-check { color: var(--primary-color); font-size: 12px; }
+
+/* 输入容器 */
+.input-container { display: flex; align-items: flex-end; gap: 10px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 12px; padding: 8px 10px; }
+.input-container textarea {
+  flex: 1; background: none; border: none; outline: none; resize: none;
+  color: var(--text-primary); font-size: 14px; font-family: inherit; line-height: 1.5; max-height: 160px; padding: 6px 4px;
+}
+.input-container textarea::placeholder { color: var(--text-muted); }
+.file-btn, .send-btn { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.file-btn { background: none; color: var(--text-secondary); }
+.file-btn:hover { background: rgba(255,255,255,.06); }
+.send-btn { background: var(--primary-color); color: #062a1c; transition: filter .2s; }
+.send-btn:hover { filter: brightness(1.1); }
+.send-btn.disabled { background: var(--bg-secondary); color: var(--text-muted); cursor: not-allowed; }
+.send-btn.stop { background: var(--danger-color); color: #fff; }
+
+/* =========================================================
+   任务控制台
+   ========================================================= */
+.tm-console {
+  border: 1px solid var(--border-color); border-radius: 16px;
+  background: linear-gradient(180deg, var(--bg-secondary), var(--bg-primary));
+  min-height: 420px; overflow: hidden; margin-bottom: 16px;
+}
+
+.tm-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 30px; }
+.tm-empty-icon { font-size: 44px; margin-bottom: 14px; }
+.tm-empty h2 { margin: 0 0 6px; font-size: 19px; }
+.tm-empty p { margin: 0 0 22px; color: var(--text-secondary); font-size: 13.5px; }
+.tm-goal-input { width: 100%; max-width: 520px; min-height: 84px; resize: vertical; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 10px; padding: 12px 14px; font-size: 14px; font-family: inherit; }
+.tm-goal-input:focus { outline: none; border-color: var(--task-color); }
+
+.tm-templates { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0 22px; max-width: 520px; }
+.tm-template-chip { background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-secondary); padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; transition: .15s; }
+.tm-template-chip:hover { border-color: var(--task-color); color: var(--task-light); }
+
+.tm-empty-workspace-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+.tm-workspace-select-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+.tm-workspace-select-btn:hover { border-color: var(--task-color); }
+
+.tm-start-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--task-color); border: none; color: #fff; padding: 11px 26px; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer; transition: filter .2s; }
+.tm-start-btn:hover { filter: brightness(1.1); }
+.tm-start-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.tm-header { padding: 16px 18px 0; }
+.tm-header-main { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.tm-goal-row { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tm-status-pill { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.tm-status-pill.idle { background: rgba(139,150,165,.15); color: var(--text-secondary); }
+.tm-status-pill.planning { background: rgba(245,158,11,.15); color: var(--warn-color); }
+.tm-status-pill.executing { background: var(--task-dim); color: var(--task-light); }
+.tm-status-pill.paused { background: rgba(245,158,11,.15); color: var(--warn-color); }
+.tm-status-pill.done { background: var(--primary-dim); color: var(--primary-light); }
+.tm-status-pill.error { background: rgba(239,68,68,.15); color: var(--danger-color); }
+
+.tm-goal-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 500; }
+.tm-goal-edit-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--task-color); color: var(--text-primary); padding: 6px 10px; border-radius: 6px; font-size: 14px; }
+.tm-edit-goal-btn { flex-shrink: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 4px; }
+.tm-edit-goal-btn:hover { color: var(--text-primary); }
+
+.tm-controls { display: flex; gap: 8px; flex-shrink: 0; }
+.tm-ctrl-btn { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-secondary); cursor: pointer; transition: .15s; }
+.tm-ctrl-btn:hover { color: var(--text-primary); border-color: #37455a; }
+.tm-ctrl-btn.tm-danger:hover { color: var(--danger-color); border-color: var(--danger-color); }
+
+.tm-meta-bar { display: flex; flex-wrap: wrap; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--border-color); font-size: 12px; }
+.tm-meta-item { display: flex; align-items: center; gap: 7px; background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 6px 11px; border-radius: 8px; color: var(--text-secondary); position: relative; }
+
+.tm-context-meter { min-width: 190px; }
+.tm-context-track { width: 70px; height: 6px; background: #0e141d; border-radius: 4px; overflow: hidden; }
+.tm-context-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+.tm-context-fill.low { background: var(--primary-color); }
+.tm-context-fill.mid { background: var(--warn-color); }
+.tm-context-fill.high { background: var(--danger-color); }
+.tm-context-text { color: var(--text-primary); font-weight: 600; font-size: 11.5px; }
+.tm-context-raw { color: var(--text-muted); font-size: 11px; }
+
+.tm-permission-badge { color: var(--primary-light); border-color: rgba(16,185,129,.35); }
+.tm-permission-badge i { color: var(--primary-color); }
+.tm-upcoming-tag { background: rgba(255,255,255,.06); color: var(--text-muted); font-size: 9.5px; padding: 1px 6px; border-radius: 999px; margin-left: 2px; }
+
+.tm-workspace-badge { cursor: pointer; color: var(--text-primary); }
+.tm-workspace-badge:hover { border-color: var(--task-color); }
+.tm-workspace-path { background: rgba(255,255,255,.05); padding: 1px 6px; border-radius: 4px; font-size: 10.5px; color: var(--text-muted); font-family: "SF Mono", Consolas, monospace; }
+.tm-workspace-menu { position: absolute; top: 42px; left: 0; width: 260px; z-index: 20; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 10px; padding: 6px; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+.tm-workspace-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: .15s; }
+.tm-workspace-menu-item:hover { background: var(--bg-secondary); }
+.tm-workspace-menu-item.active { background: var(--task-dim); }
+.tm-wmi-name { font-size: 12.5px; color: var(--text-primary); }
+.tm-wmi-path { font-size: 10.5px; color: var(--text-muted); }
+.tm-add-new { color: var(--task-light); border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 9px; }
+
+.tm-file-tree-toggle.active { border-color: var(--task-color); color: var(--task-light); }
+
+.tm-body { display: flex; gap: 0; min-height: 320px; }
+.tm-timeline { flex: 1; min-width: 0; padding: 18px; overflow-y: auto; max-height: 560px; }
+
+.tm-step { display: flex; gap: 12px; }
+.tm-step-rail { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+.tm-step-dot { width: 26px; height: 26px; border-radius: 50%; background: var(--bg-tertiary); border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
+.tm-step-dot.running { background: var(--task-dim); border-color: var(--task-color); color: var(--task-light); }
+.tm-step-dot.success { background: var(--primary-dim); border-color: var(--primary-color); color: var(--primary-light); }
+.tm-step-dot.error { background: rgba(239,68,68,.15); border-color: var(--danger-color); color: var(--danger-color); }
+.tm-step-line { width: 2px; flex: 1; background: var(--border-color); margin: 4px 0; min-height: 20px; }
+.tm-step:last-child .tm-step-line { display: none; }
+
+.tm-step-card { flex: 1; min-width: 0; margin-bottom: 18px; }
+.tm-step-card-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 4px 0 8px; color: var(--text-primary); font-size: 13.5px; font-weight: 600; }
+.tm-step-card-header i { color: var(--text-muted); font-size: 11px; }
+.tm-step-waiting { color: var(--text-muted); text-align: center; padding: 14px; font-size: 12.5px; }
+
+.tm-tool-io { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.tm-tool-io-label { font-size: 10.5px; color: var(--text-muted); margin-bottom: 4px; }
+.tm-tool-io-content { background: #0b1017; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; margin: 0; font-size: 11px; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; font-family: "SF Mono", Consolas, monospace; }
+
+.tm-final-result { margin-top: 10px; padding: 16px; border-radius: 12px; background: rgba(16,185,129,.06); border: 1px solid rgba(16,185,129,.3); }
+.tm-final-title { display: flex; align-items: center; gap: 8px; color: var(--primary-light); font-weight: 700; margin-bottom: 10px; font-size: 13.5px; }
+.tm-new-task-btn { margin-top: 12px; background: none; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 6px 14px; border-radius: 999px; font-size: 12px; cursor: pointer; }
+.tm-new-task-btn:hover { border-color: var(--primary-color); color: var(--primary-light); }
+
+.tm-workspace-panel { width: 230px; flex-shrink: 0; border-left: 1px solid var(--border-color); background: var(--bg-primary); display: flex; flex-direction: column; }
+.tm-workspace-panel-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border-color); font-size: 12.5px; color: var(--text-primary); font-weight: 600; }
+.tm-workspace-panel-header button { background: none; border: none; color: var(--text-muted); cursor: pointer; }
+.tm-file-tree { padding: 8px; overflow-y: auto; }
+.tm-file-node { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.tm-file-node:hover { background: var(--bg-tertiary); }
+.tm-file-node i { font-size: 11px; color: var(--text-muted); }
+.tm-file-node.modified { color: var(--text-primary); }
+.tm-modified-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn-color); margin-left: auto; }
+
+.tm-followup-hint { padding: 10px 18px; border-top: 1px solid var(--border-color); font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+
+@media (max-width: 900px) { .tm-workspace-panel { display: none; } }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="container">
+
+    <!-- ============ 侧边栏 ============ -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="app-title"><span class="logo-icon">🌱</span><span>豆豆</span></div>
+        <button class="new-chat-btn" @click="createNewChat"><i class="fas fa-plus"></i><span>新对话</span></button>
+        <div class="tab-switch">
+          <span :class="['tab', { active: currentStatus === 'active' }]" @click="currentStatus = 'active'">对话</span>
+          <span :class="['tab', { active: currentStatus === 'archived' }]" @click="currentStatus = 'archived'">归档</span>
+        </div>
+      </div>
+      <div class="chat-list">
+        <div v-for="chat in filteredChatList" :key="chat.id"
+             :class="['chat-item', { active: currentChatId === chat.id }]"
+             @click="selectChat(chat.id)">
+          <span v-if="editingChatId !== chat.id" class="chat-title" @dblclick="startRename(chat.id, $event)">{{ chat.title }}</span>
+          <input v-else type="text" class="rename-input" :value="chat.title"
+                 @blur="commitRename(chat.id, $event)" @keydown.enter="commitRename(chat.id, $event)">
+          <span class="chat-actions">
+            <button v-if="currentStatus === 'active'" class="action-btn" @click.stop="toggleMenu(chat.id)"><i class="fas fa-ellipsis-v"></i></button>
+            <button v-if="currentStatus === 'archived'" class="action-btn" @click.stop="restoreChat(chat.id)"><i class="fas fa-undo"></i></button>
+          </span>
+          <div v-if="currentStatus === 'active' && menuOpenId === chat.id" class="dropdown-menu" @click.stop>
+            <button class="dropdown-item" @click.stop="startRename(chat.id)"><i class="fas fa-edit"></i> 修改标题</button>
+            <button class="dropdown-item archive-item" @click.stop="archiveChat(chat.id)"><i class="fas fa-archive"></i> 归档</button>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="model-info"><i class="fas fa-link"></i><span>demo.local:8000</span></div>
+      </div>
+    </div>
+
+    <!-- ============ 主区域 ============ -->
+    <div class="main-content">
+      <div class="top-decoration"><div class="decoration-line"></div></div>
+
+      <div class="messages-container" ref="messagesContainer" @click="closeAllPopups">
+
+        <!-- ============ 任务模式工作台 ============ -->
+        <div v-if="modeType === 'task'" class="tm-console">
+
+          <!-- 空态 -->
+          <div class="tm-empty" v-if="task.status === 'idle'">
+            <div class="tm-empty-icon">🧭</div>
+            <h2>进入任务模式</h2>
+            <p>描述一个目标，豆豆会在指定工作区内自主规划、调用工具并完成任务</p>
+
+            <textarea class="tm-goal-input" v-model="taskGoalDraft"
+              placeholder="例如：帮我梳理 /project 目录下的接口文档，并生成一份 API 变更清单"></textarea>
+
+            <div class="tm-templates">
+              <button class="tm-template-chip" v-for="(t,i) in taskTemplates" :key="i" @click="taskGoalDraft = t">{{ t }}</button>
+            </div>
+
+            <div class="tm-empty-workspace-row">
+              <span>工作区：</span>
+              <div style="position:relative;">
+                <button class="tm-workspace-select-btn" @click.stop="showWorkspaceMenu = !showWorkspaceMenu">
+                  <i class="fas fa-folder"></i> {{ selectedWorkspace ? selectedWorkspace.name : '请选择工作区' }}
+                  <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="tm-workspace-menu" v-if="showWorkspaceMenu" @click.stop>
+                  <div class="tm-workspace-menu-item" v-for="ws in workspaces" :key="ws.id"
+                       :class="{ active: selectedWorkspaceId === ws.id }" @click="selectWorkspace(ws.id)">
+                    <i class="fas fa-folder"></i>
+                    <div><div class="tm-wmi-name">{{ ws.name }}</div><div class="tm-wmi-path">{{ ws.path }}</div></div>
+                  </div>
+                  <div class="tm-workspace-menu-item tm-add-new"><i class="fas fa-plus"></i> 连接新工作区</div>
+                </div>
+              </div>
+            </div>
+
+            <button class="tm-start-btn" :disabled="!taskGoalDraft.trim() || !selectedWorkspaceId" @click="startTask">
+              <i class="fas fa-play"></i> 开始任务
+            </button>
+          </div>
+
+          <!-- 运行/完成态 -->
+          <template v-else>
+            <div class="tm-header">
+              <div class="tm-header-main">
+                <div class="tm-goal-row">
+                  <span class="tm-status-pill" :class="task.status">{{ taskStatusLabel }}</span>
+                  <template v-if="!editingTaskGoal">
+                    <div class="tm-goal-text" :title="task.goal">{{ task.goal }}</div>
+                    <button class="tm-edit-goal-btn" @click="editingTaskGoal = true"><i class="fas fa-pen"></i></button>
+                  </template>
+                  <template v-else>
+                    <input class="tm-goal-edit-input" v-model="task.goal" @keydown.enter="editingTaskGoal=false" @blur="editingTaskGoal=false">
+                  </template>
+                </div>
+                <div class="tm-controls">
+                  <button class="tm-ctrl-btn" v-if="task.status === 'executing'" @click="pauseTask" title="暂停"><i class="fas fa-pause"></i></button>
+                  <button class="tm-ctrl-btn" v-if="task.status === 'paused'" @click="resumeTask" title="继续"><i class="fas fa-play"></i></button>
+                  <button class="tm-ctrl-btn tm-danger" @click="stopTask" title="终止任务"><i class="fas fa-stop"></i></button>
+                </div>
+              </div>
+
+              <div class="tm-meta-bar">
+                <div class="tm-meta-item tm-context-meter" title="当前任务已占用的上下文窗口">
+                  <i class="fas fa-microchip"></i>
+                  <div class="tm-context-track"><div class="tm-context-fill" :class="taskContextLevelClass" :style="{ width: taskContextPercent + '%' }"></div></div>
+                  <span class="tm-context-text">{{ taskContextPercent }}%</span>
+                  <span class="tm-context-raw">{{ formatK(task.context.used) }}/{{ formatK(task.context.max) }}</span>
+                </div>
+
+                <div class="tm-meta-item tm-permission-badge" title="所有工具调用将自动执行，无需人工确认">
+                  <i class="fas fa-unlock"></i><span>权限模式：全部允许</span>
+                  <span class="tm-upcoming-tag">自定义策略即将开放</span>
+                </div>
+
+                <div class="tm-meta-item tm-workspace-badge" @click.stop="showWorkspaceMenu = !showWorkspaceMenu">
+                  <i class="fas fa-folder-open"></i>
+                  <span>{{ selectedWorkspace ? selectedWorkspace.name : '未选择' }}</span>
+                  <code class="tm-workspace-path" v-if="selectedWorkspace">{{ selectedWorkspace.path }}</code>
+                  <i class="fas fa-chevron-down"></i>
+                  <div class="tm-workspace-menu" v-if="showWorkspaceMenu" @click.stop>
+                    <div class="tm-workspace-menu-item" v-for="ws in workspaces" :key="ws.id"
+                         :class="{ active: selectedWorkspaceId === ws.id }" @click="selectWorkspace(ws.id)">
+                      <i class="fas fa-folder"></i>
+                      <div><div class="tm-wmi-name">{{ ws.name }}</div><div class="tm-wmi-path">{{ ws.path }}</div></div>
+                    </div>
+                    <div class="tm-workspace-menu-item tm-add-new"><i class="fas fa-plus"></i> 连接新工作区</div>
+                  </div>
+                </div>
+
+                <button class="tm-meta-item tm-file-tree-toggle" :class="{ active: showFileTree }" @click.stop="showFileTree = !showFileTree">
+                  <i class="fas fa-sitemap"></i> 工作区文件
+                </button>
+              </div>
+            </div>
+
+            <div class="tm-body">
+              <div class="tm-timeline">
+                <div class="tm-step" v-for="(step, sIdx) in task.steps" :key="step.id">
+                  <div class="tm-step-rail">
+                    <div class="tm-step-dot" :class="step.status">
+                      <i v-if="step.status === 'running'" class="fas fa-spinner fa-spin"></i>
+                      <i v-else-if="step.status === 'success'" class="fas fa-check"></i>
+                      <i v-else-if="step.status === 'error'" class="fas fa-times"></i>
+                      <span v-else>{{ sIdx + 1 }}</span>
+                    </div>
+                    <div class="tm-step-line"></div>
+                  </div>
+
+                  <div class="tm-step-card">
+                    <div class="tm-step-card-header" @click="step.collapsed = !step.collapsed">
+                      <span>{{ sIdx + 1 }}. {{ step.title }}</span>
+                      <i :class="['fas', step.collapsed ? 'fa-chevron-right' : 'fa-chevron-down']"></i>
+                    </div>
+
+                    <div v-show="!step.collapsed">
+                      <div v-if="step.timeline && step.timeline.length > 0" class="timeline-section">
+                        <div class="timeline-header" @click="step.showTimeline = !step.showTimeline">
+                          <i class="fas fa-brain timeline-main-icon"></i>
+                          <span class="timeline-title">思考与工具调用</span>
+                          <i :class="['fas', step.showTimeline ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+                        </div>
+                        <div v-show="step.showTimeline" class="timeline-content">
+                          <div v-for="(item, iIdx) in step.timeline" :key="iIdx" class="timeline-item">
+                            <div class="timeline-dot" :class="item.type === 'tool' ? item.status : item.type"></div>
+                            <div class="timeline-item-body">
+                              <template v-if="item.type === 'thinking'">
+                                <div class="timeline-thinking">{{ item.content }}</div>
+                              </template>
+                              <template v-else>
+                                <div class="timeline-tool">
+                                  <i class="fas fa-wrench timeline-tool-icon"></i>
+                                  <span class="timeline-tool-name">{{ item.toolName }}</span>
+                                  <span class="timeline-tool-status" :class="item.status">
+                                    <i v-if="item.status==='running'" class="fas fa-spinner fa-spin"></i>
+                                    <i v-else-if="item.status==='completed'" class="fas fa-check"></i>
+                                    <i v-else class="fas fa-times"></i>
+                                  </span>
+                                </div>
+                                <div v-if="item.input !== undefined || item.output !== undefined" class="tm-tool-io">
+                                  <div>
+                                    <div class="tm-tool-io-label">输入参数</div>
+                                    <pre class="tm-tool-io-content">{{ formatToolIO(item.input) }}</pre>
+                                  </div>
+                                  <div>
+                                    <div class="tm-tool-io-label">输出结果</div>
+                                    <pre class="tm-tool-io-content">{{ item.output || '（等待返回...）' }}</pre>
+                                  </div>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-if="step.output" class="text-content markdown-body" v-html="renderMarkdown(step.output)"></div>
+
+                      <div v-if="step.usage" class="usage-bar">
+                        <i class="fas fa-coins usage-icon"></i>
+                        <span>{{ step.usage.total_tokens }} tokens</span>
+                      </div>
+
+                      <div class="tm-step-waiting" v-if="(!step.timeline || step.timeline.length===0) && !step.output">
+                        <i class="fas fa-hourglass-half"></i> 等待模型生成内容...
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="tm-final-result" v-if="task.status === 'done'">
+                  <div class="tm-final-title"><i class="fas fa-flag-checkered"></i> 任务完成</div>
+                  <div class="text-content markdown-body" v-html="renderMarkdown(task.finalOutput)"></div>
+                  <button class="tm-new-task-btn" @click="resetTask"><i class="fas fa-redo"></i> 开始新任务</button>
+                </div>
+              </div>
+
+              <div class="tm-workspace-panel" v-if="showFileTree">
+                <div class="tm-workspace-panel-header">
+                  <span>{{ selectedWorkspace ? selectedWorkspace.name : '' }}</span>
+                  <button @click="showFileTree = false"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="tm-file-tree">
+                  <div v-for="node in workspaceFileTree" :key="node.path" class="tm-file-node"
+                       :class="{ modified: node.modified }" :style="{ paddingLeft: (node.depth*14)+'px' }">
+                    <i :class="node.type==='dir' ? 'fas fa-folder' : 'fas fa-file-alt'"></i>
+                    <span>{{ node.name }}</span>
+                    <span v-if="node.modified" class="tm-modified-dot" title="Agent 已修改此文件"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tm-followup-hint" v-if="task.status !== 'done'">
+              <i class="fas fa-info-circle"></i> 任务执行期间，可在下方输入框补充指令或纠正方向
+            </div>
+          </template>
+        </div>
+
+        <!-- ============ 普通聊天模式 ============ -->
+        <template v-if="modeType === 'chat'">
+          <div v-if="currentChat && currentChat.messages.length === 0" class="empty-state">
+            <div class="empty-icon-wrapper"><div class="empty-icon">🤖</div></div>
+            <h2>你好，我是豆豆</h2>
+            <p>有什么可以帮助你的吗？</p>
+            <div class="quick-actions">
+              <div class="quick-action" @click="quickPrompt('介绍一下你自己')"><i class="fas fa-user"></i><span>介绍一下你自己</span></div>
+              <div class="quick-action" @click="quickPrompt('帮我写一个Python示例')"><i class="fas fa-code"></i><span>帮我写代码</span></div>
+              <div class="quick-action" @click="quickPrompt('分析一段文本')"><i class="fas fa-file-alt"></i><span>分析文本</span></div>
+            </div>
+          </div>
+
+          <div v-for="(msg, index) in currentChat?.messages || []" :key="index" :class="['message', msg.role]">
+            <div class="message-avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
+            <div class="message-content">
+              <div v-if="msg.role === 'user'" class="user-message">{{ msg.content }}</div>
+              <div v-if="msg.role === 'user'" class="copy-btn" @click="copyMessage(msg)">
+                <i v-if="!msg.copied" class="fas fa-copy"></i><i v-else class="fas fa-check"></i>
+              </div>
+
+              <div v-if="msg.role !== 'user'" class="ai-message">
+                <div v-if="msg.timeline && msg.timeline.length > 0" class="timeline-section">
+                  <div class="timeline-header" @click="msg.showTimeline = !msg.showTimeline">
+                    <i class="fas fa-brain timeline-main-icon"></i>
+                    <span class="timeline-title">思考过程</span>
+                    <i :class="['fas', msg.showTimeline ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+                  </div>
+                  <div v-show="msg.showTimeline" class="timeline-content">
+                    <div v-for="(item, idx) in msg.timeline" :key="idx" class="timeline-item">
+                      <div class="timeline-dot" :class="item.type === 'tool' ? item.status : item.type"></div>
+                      <div class="timeline-item-body">
+                        <div v-if="item.type === 'thinking'" class="timeline-thinking">{{ item.content }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="text-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                <div v-if="isSending && isLastMessage(msg)" class="thinking-loading">
+                  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                </div>
+
+                <div class="copy-btn" @click="copyMessage(msg)">
+                  <i v-if="!msg.copied" class="fas fa-copy"></i><i v-else class="fas fa-check"></i>
+                </div>
+                <div class="message-actions">
+                  <button class="action-btn" @click="regenerateMessage(msg.id)"><i class="fas fa-redo"></i> 重新生成</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ============ 输入区域 ============ -->
+      <div class="input-area">
+        <!-- 模式选择区：对话助手抽屉 + 任务模式 -->
+        <div class="mode-selector">
+          <div class="tm-chat-cluster">
+            <button type="button" class="tm-mode-pill tm-chat-pill" :class="{ active: modeType === 'chat' }" @click="switchToChatMode">
+              <span>{{ currentChatAgent.icon }}</span><span>{{ currentChatAgent.name }}</span>
+            </button>
+            <button type="button" class="tm-drawer-toggle-btn" :class="{ open: showAgentDrawer }" @click.stop="showAgentDrawer = !showAgentDrawer">
+              <i class="fas fa-chevron-up"></i>
+            </button>
+            <div class="tm-agent-drawer" v-if="showAgentDrawer" @click.stop>
+              <div class="tm-agent-drawer-title">选择对话助手</div>
+              <div class="tm-agent-drawer-item" v-for="agent in agents" :key="agent.id"
+                   :class="{ active: modeType==='chat' && selectedAgent===agent.id }" @click="chooseSubAgent(agent.id)">
+                <span class="tm-adi-icon">{{ agent.icon }}</span>
+                <span class="tm-adi-text">
+                  <span class="tm-adi-name">{{ agent.name }}</span>
+                  <span class="tm-adi-desc">{{ agent.desc }}</span>
+                </span>
+                <i v-if="modeType==='chat' && selectedAgent===agent.id" class="fas fa-check tm-adi-check"></i>
+              </div>
+            </div>
+          </div>
+
+          <div class="tm-mode-divider"></div>
+
+          <button type="button" class="tm-mode-pill tm-task-pill" :class="{ active: modeType === 'task' }" @click="switchToTaskMode">
+            <span>🤖</span><span>任务模式</span>
+            <span class="tm-running-dot" v-if="task.status === 'executing'"></span>
+          </button>
+        </div>
+
+        <div class="input-container">
+          <textarea v-model="inputMessage" :placeholder="inputPlaceholder"
+                    @keydown.enter.exact.prevent="handlePrimarySend"
+                    @keydown.enter.shift.exact="inputMessage += '\n'"
+                    rows="1"></textarea>
+          <button :class="['send-btn', { stop: isSending, disabled: !isSending && !canSend }]"
+                  @click="isSending ? stopMessage() : handlePrimarySend()">
+            <i v-if="isSending" class="fas fa-stop"></i><i v-else class="fas fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      // ===== 会话列表 =====
+      currentStatus: 'active',
+      currentChatId: 1,
+      menuOpenId: null,
+      editingChatId: null,
+      chats: [
+        { id: 1, title: '多任务学习 Loss 权重讨论', archived: false, messages: [] },
+        { id: 2, title: '接口文档梳理', archived: false, messages: [] },
+      ],
+
+      // ===== 聊天 =====
+      modeType: 'chat', // 'chat' | 'task'
+      showAgentDrawer: false,
+      selectedAgent: 'chat',
+      agents: [
+        { id: 'chat', icon: '💬', name: '对话助手', desc: '通用对话，自由聊天' },
+        { id: 'file', icon: '📁', name: '文件问答', desc: '基于上传文件回答问题' },
+        { id: 'ppt', icon: '📊', name: 'PPT生成', desc: '一键生成演示文稿' },
+        { id: 'research', icon: '🔬', name: '深度研究', desc: '多步骤检索与总结' },
+        { id: 'skills', icon: '🛠', name: '技能助手', desc: '调用预置技能完成任务' },
+      ],
+      inputMessage: '',
+      isSending: false,
+
+      // ===== 任务模式 =====
+      workspaces: [
+        { id: 'ws1', name: 'my-project', path: '/workspace/my-project', type: 'git_repo' },
+        { id: 'ws2', name: '数据分析沙箱', path: '/workspace/sandbox-01', type: 'local_sandbox' },
+      ],
+      selectedWorkspaceId: 'ws1',
+      showWorkspaceMenu: false,
+      showFileTree: false,
+      workspaceFileTree: [
+        { path: 'src', name: 'src', type: 'dir', depth: 0, modified: false },
+        { path: 'src/api', name: 'api', type: 'dir', depth: 1, modified: false },
+        { path: 'src/api/user.js', name: 'user.js', type: 'file', depth: 2, modified: true },
+        { path: 'package.json', name: 'package.json', type: 'file', depth: 0, modified: false },
+      ],
+      taskGoalDraft: '',
+      editingTaskGoal: false,
+      taskTemplates: [
+        '帮我梳理项目目录结构并生成说明文档',
+        '检查代码中的潜在Bug并给出修复建议',
+        '根据数据文件生成一份分析报告',
+      ],
+      task: {
+        goal: '',
+        status: 'idle', // idle | planning | executing | paused | done | error
+        steps: [],
+        context: { used: 0, max: 200000 },
+        finalOutput: '',
+      },
+    };
+  },
+
+  computed: {
+    filteredChatList() {
+      return this.chats.filter(c => (this.currentStatus === 'archived') === !!c.archived);
+    },
+    currentChat() {
+      return this.chats.find(c => c.id === this.currentChatId);
+    },
+    currentChatAgent() {
+      return this.agents.find(a => a.id === this.selectedAgent) || this.agents[0];
+    },
+    selectedWorkspace() {
+      return this.workspaces.find(w => w.id === this.selectedWorkspaceId) || null;
+    },
+    canSend() {
+      return this.inputMessage.trim().length > 0;
+    },
+    taskContextPercent() {
+      const { used, max } = this.task.context;
+      return Math.min(100, Math.round((used / max) * 100));
+    },
+    taskContextLevelClass() {
+      const p = this.taskContextPercent;
+      if (p < 60) return 'low';
+      if (p < 85) return 'mid';
+      return 'high';
+    },
+    taskStatusLabel() {
+      return {
+        idle: '未开始', planning: '规划中', executing: '执行中',
+        paused: '已暂停', done: '已完成', error: '出错',
+      }[this.task.status] || this.task.status;
+    },
+    inputPlaceholder() {
+      if (this.modeType === 'task') {
+        return this.task.status === 'idle'
+          ? '描述你的任务目标，回车开始（Shift+Enter 换行）'
+          : '任务执行中，可输入补充指令或纠正方向...';
+      }
+      return '输入消息... (支持 Markdown，Shift+Enter 换行)';
+    },
+  },
+
+  methods: {
+    // ---- 会话列表 ----
+    createNewChat() {
+      const id = Date.now();
+      this.chats.unshift({ id, title: '新对话', archived: false, messages: [] });
+      this.currentChatId = id;
+      this.modeType = 'chat';
+    },
+    selectChat(id) { this.currentChatId = id; this.menuOpenId = null; },
+    toggleMenu(id) { this.menuOpenId = this.menuOpenId === id ? null : id; },
+    startRename(id) {
+      this.editingChatId = id;
+      this.menuOpenId = null;
+      this.$nextTick(() => document.querySelector('.rename-input')?.focus());
+    },
+    commitRename(id, e) {
+      const val = e.target.value.trim();
+      const chat = this.chats.find(c => c.id === id);
+      if (chat && val) chat.title = val;
+      this.editingChatId = null;
+    },
+    archiveChat(id) {
+      const chat = this.chats.find(c => c.id === id);
+      if (chat) chat.archived = true;
+      this.menuOpenId = null;
+    },
+    restoreChat(id) {
+      const chat = this.chats.find(c => c.id === id);
+      if (chat) chat.archived = false;
+    },
+    closeAllPopups() { this.showAgentDrawer = false; this.showWorkspaceMenu = false; this.menuOpenId = null; },
+
+    // ---- 模式切换 ----
+    switchToChatMode() { this.modeType = 'chat'; this.showAgentDrawer = false; },
+    switchToTaskMode() { this.modeType = 'task'; this.showAgentDrawer = false; },
+    chooseSubAgent(id) { this.selectedAgent = id; this.modeType = 'chat'; this.showAgentDrawer = false; },
+
+    // ---- 工作区 ----
+    selectWorkspace(id) { this.selectedWorkspaceId = id; this.showWorkspaceMenu = false; },
+
+    // ---- Markdown 渲染 ----
+    renderMarkdown(text) {
+      if (!text) return '';
+      try {
+        const html = marked.parse(text);
+        return DOMPurify.sanitize(html);
+      } catch (e) { return text; }
+    },
+
+    // ---- 普通聊天 ----
+    quickPrompt(text) { this.inputMessage = text; this.sendMessage(); },
+    isLastMessage(msg) {
+      const list = this.currentChat?.messages || [];
+      return list[list.length - 1] === msg;
+    },
+    copyMessage(msg) {
+      navigator.clipboard?.writeText(msg.content || '').catch(() => {});
+      msg.copied = true;
+      setTimeout(() => { msg.copied = false; }, 1500);
+    },
+    regenerateMessage(id) {
+      const msg = (this.currentChat?.messages || []).find(m => m.id === id);
+      if (msg) msg.content = '（重新生成的模拟回复）这是针对该问题的另一种回答方式，实际接入后端后会调用真实的重新生成接口。';
+    },
+    sendMessage() {
+      const text = this.inputMessage.trim();
+      if (!text || this.isSending) return;
+      const chat = this.currentChat;
+      if (!chat) return;
+
+      chat.messages.push({ id: Date.now(), role: 'user', content: text });
+      this.inputMessage = '';
+      this.isSending = true;
+
+      const aiMsg = {
+        id: Date.now() + 1, role: 'assistant', content: '',
+        timeline: [{ type: 'thinking', content: '正在理解你的问题，并组织回答内容...' }],
+        showTimeline: true,
+      };
+      chat.messages.push(aiMsg);
+
+      setTimeout(() => {
+        aiMsg.content = '这是一个**模拟回复**，用于演示对话模式的基本交互流程。真实接入后端后，这里会显示模型的流式输出内容。';
+        this.isSending = false;
+      }, 900);
+    },
+    stopMessage() { this.isSending = false; },
+
+    // ---- 任务模式：生命周期 ----
+    startTask() {
+      const goal = this.taskGoalDraft.trim();
+      if (!goal || !this.selectedWorkspaceId) return;
+      this.task.goal = goal;
+      this.task.status = 'executing';
+      this.task.steps = [];
+      this.task.context.used = 0;
+      this.task.finalOutput = '';
+      this.runMockTaskSteps();
+    },
+    pauseTask() { this.task.status = 'paused'; },
+    resumeTask() { this.task.status = 'executing'; },
+    stopTask() {
+      if (!confirm('确认终止当前任务？')) return;
+      this.task = { goal: '', status: 'idle', steps: [], context: { used: 0, max: 200000 }, finalOutput: '' };
+      this.taskGoalDraft = '';
+    },
+    resetTask() {
+      this.task = { goal: '', status: 'idle', steps: [], context: { used: 0, max: 200000 }, finalOutput: '' };
+      this.taskGoalDraft = '';
+    },
+
+    formatK(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); },
+    formatToolIO(obj) {
+      if (obj === undefined || obj === null) return '';
+      try { return typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2); }
+      catch (e) { return String(obj); }
+    },
+
+    handlePrimarySend() {
+      if (this.modeType === 'task') {
+        if (this.task.status === 'idle') {
+          this.taskGoalDraft = this.inputMessage;
+          this.inputMessage = '';
+          this.startTask();
+        } else {
+          // 任务执行中的补充指令/纠偏（演示：仅清空输入框）
+          this.inputMessage = '';
+        }
+        return;
+      }
+      this.sendMessage();
+    },
+
+    // ---- 模拟后端流式推送任务步骤（真实接入时替换为 SSE/WebSocket）----
+    runMockTaskSteps() {
+      const mockSteps = [
+        {
+          title: '分析任务目标与工作区结构',
+          thinking: '用户希望梳理接口文档，我需要先查看目录结构，确认关键文件位置，再决定读取哪些文件。',
+          toolCalls: [{ name: 'ListDir', input: { path: '/' }, output: 'src/\n  api/\npackage.json' }],
+          output: null,
+        },
+        {
+          title: '检索并读取关键接口文件',
+          thinking: '根据目录结构，接口定义应该在 src/api 下，逐个读取确认导出函数签名。',
+          toolCalls: [{ name: 'ReadFile', input: { path: 'src/api/user.js' }, output: 'export function getUser(id) {...}\nexport function updateUser(id, data) {...}' }],
+          output: null,
+        },
+        {
+          title: '生成分析结论与变更清单',
+          thinking: null, toolCalls: [],
+          output: '根据分析，共发现 **12** 个接口定义，其中 **3** 个缺少统一错误处理逻辑，建议优先修复 `user.js` 中的两个接口。',
+        },
+      ];
+
+      let i = 0;
+      const addNext = () => {
+        if (i >= mockSteps.length) {
+          this.task.status = 'done';
+          this.task.finalOutput = '任务已完成：共分析 12 个接口，生成变更清单，详见上方各步骤输出。';
+          return;
+        }
+        const s = mockSteps[i];
+        const step = {
+          id: 'step-' + (i + 1), title: s.title, status: 'running',
+          timeline: [], showTimeline: true, output: '', usage: null, collapsed: false,
+        };
+        this.task.steps.push(step);
+
+        setTimeout(() => { if (s.thinking) step.timeline.push({ type: 'thinking', content: s.thinking }); }, 350);
+
+        setTimeout(() => {
+          s.toolCalls.forEach(tc => step.timeline.push({ type: 'tool', toolName: tc.name, status: 'running', input: tc.input, output: null }));
+        }, 800);
+
+        setTimeout(() => {
+          step.timeline.forEach(item => {
+            if (item.type === 'tool') {
+              const src = s.toolCalls.find(x => x.name === item.toolName);
+              item.status = 'completed';
+              item.output = src.output;
+            }
+          });
+          step.output = s.output;
+          step.status = 'success';
+          step.usage = { total_tokens: 800 + Math.floor(Math.random() * 600) };
+          this.task.context.used += step.usage.total_tokens;
+          i++;
+          setTimeout(addNext, 600);
+        }, 1700);
+      };
+      addNext();
+    },
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

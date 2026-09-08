@@ -1,0 +1,108 @@
+完整实现
+Python
+
+# storage/jsonl_store.py
+"""
+会话存储：JSONL 作为 source of truth。
+每个对话一个文件，每行一条消息，追加写入，崩溃安全。
+"""
+from __future__ import annotations
+import json
+import os
+from pathlib import Path
+from typing import Iterator
+from message import Message, message_to_dict, dict_to_message
+
+
+class JSONLSessionStore:
+    def __init__(self, base_dir: str = ".sessions"):
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def _path_for(self, conversation_id: str) -> Path:
+        return self.base_dir / f"{conversation_id}.jsonl"
+
+    def append_message(self, conversation_id: str, msg: Message) -> None:
+        """
+        追加单条消息。这是最高频的操作——每次 QueryEngine 产生一条新消息
+        （用户输入、assistant 回复、工具结果）都应该立即调用这个方法，
+        而不是攒到最后统一写，这样即使程序中途崩溃，已发生的对话也不会丢。
+        """
+        path = self._path_for(conversation_id)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(message_to_dict(msg), ensure_ascii=False) + "\n")
+
+    def load_all(self, conversation_id: str) -> list[Message]:
+        """加载一个会话的完整历史"""
+        path = self._path_for(conversation_id)
+        if not path.exists():
+            return []
+
+        messages: list[Message] = []
+        with open(path, encoding="utf-8") as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    messages.append(dict_to_message(json.loads(line)))
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    # 单行损坏不应该导致整个会话读取失败——
+                    # 这正是 JSONL 相比整体 JSON 文件的关键优势：
+                    # 跳过坏行，其余历史依然可用
+                    print(f"[警告] {conversation_id} 第 {line_no} 行损坏，已跳过: {e}")
+                    continue
+        return messages
+
+    def iter_messages(self, conversation_id: str) -> Iterator[Message]:
+        """流式读取，避免大会话一次性加载进内存"""
+        path = self._path_for(conversation_id)
+        if not path.exists():
+            return
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield dict_to_message(json.loads(line))
+
+    def list_conversation_ids(self) -> list[str]:
+        return [p.stem for p in self.base_dir.glob("*.jsonl")]
+
+    def delete(self, conversation_id: str) -> None:
+        path = self._path_for(conversation_id)
+        if path.exists():
+            path.unlink()
+
+    def rewrite_all(self, conversation_id: str, messages: list[Message]) -> None:
+        """
+        整体重写，仅用于"编辑历史/压缩上下文"这类需要替换整个会话的场景。
+        平时的正常对话流程应该用 append_message，不要用这个。
+        """
+        path = self._path_for(conversation_id)
+        tmp_path = path.with_suffix(".jsonl.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            for msg in messages:
+                f.write(json.dumps(message_to_dict(msg), ensure_ascii=False) + "\n")
+        tmp_path.replace(path)  # 原子替换，避免重写过程中崩溃导致文件损坏
+与 QueryEngine 的对接：把"追加写"接到消息产生的地方
+Python
+
+# query_engine.py（关键片段）
+from storage.jsonl_store import JSONLSessionStore
+
+class QueryEngine:
+    def __init__(self, config):
+        self.config = config
+        self.store = JSONLSessionStore()
+
+        # 启动时从磁盘恢复历史（如果有的话）
+        existing = self.store.load_all(config.conversation_id)
+        self.state = QueryEngineState(
+            conversation_id=config.conversation_id,
+            messages=existing or list(config.initial_messages),
+        )
+        self.abort_event = asyncio.Event()
+
+    def append_message(self, msg: Message) -> None:
+        self.state.messages.append(msg)
+        self.store.append_message(self.config.conversation_id, msg)  # 立即落盘

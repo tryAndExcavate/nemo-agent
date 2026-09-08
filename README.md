@@ -71,6 +71,57 @@ uvicorn app.main:app --host 0.0.0.0 --port 8888 --reload
 
 访问 `http://localhost:8888/docs` 查看 Swagger API 文档。
 
+## 前端使用（Frontend）
+
+> 前端处于**渐进式迁移中**：原「CDN Vue3 单页」由 FastAPI 直接托管（当前线上页面），新「Vite + Vue3 SFC 工程」在 `frontend/` 目录逐步搭建，尚未切换为默认入口。
+
+### 一、旧版单页（默认，可直接用）
+
+由 FastAPI 直接读取 `app/static/` 托管，无需任何前端构建：
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8888 --reload
+# 浏览器打开 http://localhost:8888
+```
+
+依赖 CDN：Vue 3、Marked、Highlight.js、DOMPurify、Font Awesome（全部走 `<script>/<link>` CDN）。
+前端脚本：`app/static/js/{config,constants,utils,api,app}.js`（全局挂载到 `window.*`）。
+
+### 二、新版 Vue3 工程（Vite，迁移中）
+
+位于 `frontend/`，用于逐步把单页拆分为标准 SFC 组件。要求 Node.js ≥ 18。
+
+```bash
+cd frontend
+npm install        # 安装依赖
+npm run dev        # 开发服务器 → http://localhost:5173
+npm run build      # 产物输出到 frontend/dist
+```
+
+**开发说明**：
+- dev 端口 `5173`，`vite.config.js` 已配置 proxy 将 `/agent /api /file /chat /session /branches /models /base /conversations` 转发到后端 `http://localhost:8888`，因此**开发时需先启动后端**。
+- 修改源码后 Vite 热更新（HMR），无需重启。
+- 后端 8888 的旧页面全程不受影响，可两者对照排错。
+
+**当前迁移状态**：
+- ✅ Phase 0 骨架：5 个全局脚本已转 ES Module（`frontend/src/lib/`），完整模板+逻辑搬入 `frontend/src/App.vue`，构建/开发链路跑通
+- ⏳ Phase 1-3：组件化拆分进行中（低风险叶子组件 → 任务模式 → 聊天/分支）
+- ⬜ Phase 4：切换到 FastAPI 托管 `frontend/dist` 产物
+
+**新版工程目录**：
+
+```
+frontend/
+├── package.json        # vue3 / vite / plugin-vue / marked@4 / highlight.js / dompurify
+├── vite.config.js      # dev 5173 + 后端 proxy
+├── index.html          # Vite 入口
+└── src/
+    ├── main.js         # 挂载 #app，导入样式与 window.__copyCode
+    ├── App.vue         # 单根模板 + <script setup>（含全部旧逻辑，待拆分）
+    ├── lib/            # config / constants / api / utils → ES Module
+    └── styles/         # style.css + task-mode.css（原样复制）
+```
+
 ## 项目结构
 
 ```
@@ -160,4 +211,4 @@ app/
 - **Object Storage**: MinIO
 - **File Parsing**: pypdf + python-docx + python-pptx
 - **Context**: rank_bm25 + jieba (中文检索)
-- **Frontend**: Vue 3 (CDN) + Marked + Highlight.js + DOMPurify
+- **Frontend**: Vue 3 — 旧版走 CDN 单页（`app/static/`，FastAPI 直接托管）；新版工程 `frontend/` 走 Vite + SFC（迁移中），Marked + Highlight.js + DOMPurify

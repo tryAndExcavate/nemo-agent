@@ -8,7 +8,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-TASK_KEY_PREFIX = "agent:task:"
+TASK_KEY_PREFIX = "agent:task-mode.css:"
 STOP_TOPIC_NAME = "agent:stop"
 TASK_TTL_SECONDS = 30 * 60  # 30 minutes
 TTL_REFRESH_INTERVAL = 5 * 60  # 5 minutes
@@ -53,11 +53,11 @@ class TaskManager:
             self._pubsub = self._redis.pubsub()
             await self._pubsub.subscribe(**{STOP_TOPIC_NAME: self._handle_stop_message})
             self._refresh_task = asyncio.create_task(self._refresh_loop())
-            # 清理所有残留的 task key（防止重启后旧 key 阻塞新实例）
+            # 清理所有残留的 task-mode.css key（防止重启后旧 key 阻塞新实例）
             stale_keys = await self._redis.keys(f"{TASK_KEY_PREFIX}*")
             if stale_keys:
                 await self._redis.delete(*stale_keys)
-                logger.info(f"Cleaned {len(stale_keys)} stale task keys on startup")
+                logger.info(f"Cleaned {len(stale_keys)} stale task-mode.css keys on startup")
             logger.info(f"TaskManager started with Redis, instanceId={self._instance_id}")
         except Exception as e:
             logger.warning(f"Redis 不可用，降级为本地模式: {e}")
@@ -91,7 +91,7 @@ class TaskManager:
 
     async def register_task(self, conversation_id: str, agent_type: str = "unknown") -> TaskInfo | None:
         if conversation_id in self._tasks:
-            logger.warning(f"Conversation {conversation_id} already has local task")
+            logger.warning(f"Conversation {conversation_id} already has local task-mode.css")
             return None
 
         if self._redis_available:
@@ -107,7 +107,7 @@ class TaskManager:
 
         task_info = TaskInfo(asyncio.Queue(), agent_type)
         self._tasks[conversation_id] = task_info
-        logger.info(f"Registered task: conversationId={conversation_id}, agentType={agent_type}")
+        logger.info(f"Registered task-mode.css: conversationId={conversation_id}, agentType={agent_type}")
         return task_info
 
     def get_task(self, conversation_id: str) -> TaskInfo | None:

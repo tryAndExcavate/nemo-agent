@@ -1,2 +1,0 @@
-{"timestamp": "2026-08-28T06:15:51.969842", "model_id": "", "model_name": "qwen3.7-plus", "provider": "openai_compatible", "conversation_id": "chat_1787815864239_o957uh5rf", "agent_type": "skills", "prompt_tokens": 2633, "completion_tokens": 481, "total_tokens": 3114, "call_count": 1}
-{"timestamp": "2026-08-28T06:17:09.350168", "model_id": "", "model_name": "qwen3.7-plus", "provider": "openai_compatible", "conversation_id": "chat_1787815864239_o957uh5rf", "agent_type": "websearch", "prompt_tokens": 846, "completion_tokens": 568, "total_tokens": 1414, "call_count": 1}

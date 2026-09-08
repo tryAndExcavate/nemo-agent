@@ -33,6 +33,10 @@ class SetActiveSummaryRequest(BaseModel):
     model_id: str
 
 
+class SetActiveSubAgentRequest(BaseModel):
+    model_id: str
+
+
 @router.get("/active")
 def get_active():
     """读当前基座激活模型（脱敏）。未激活时 data=None。"""
@@ -129,3 +133,52 @@ def clear_active_summary():
     except Exception as e:
         logger.error(f"拔出摘要模型失败: {e}")
         return _err(f"拔出摘要模型失败: {e}")
+
+
+# ===== 子 Agent 模型接口（用于子代理任务执行） =====
+
+@router.get("/active/sub_agent")
+def get_active_sub_agent():
+    """读当前子 Agent 模型（脱敏）。未激活时 data=None。"""
+    logger.info("GET /base/active/sub_agent")
+    try:
+        active_id = ConfigStore.get_active_sub_agent_model_id()
+        if not active_id:
+            return _ok(None, "尚未挂载子 Agent 模型")
+        try:
+            model = ConfigStore.get_basic(active_id)
+        except ValueError:
+            ConfigStore.clear_active_sub_agent_model()
+            return _ok(None, "子 Agent 模型已被删除，已自动拔出")
+        return _ok(model)
+    except Exception as e:
+        logger.error(f"读取子 Agent 模型失败: {e}")
+        return _err(f"读取子 Agent 模型失败: {e}")
+
+
+@router.post("/active/sub_agent")
+def set_active_sub_agent(req: SetActiveSubAgentRequest):
+    """把某个模型设为子 Agent 模型（保存即生效）。"""
+    logger.info(f"POST /base/active/sub_agent model_id={req.model_id}")
+    try:
+        try:
+            model = ConfigStore.get_basic(req.model_id)
+        except ValueError as e:
+            return _err(str(e), code=404)
+        ConfigStore.set_active_sub_agent_model_id(req.model_id)
+        return _ok(model, f"已挂载子 Agent 模型 {model['name']}")
+    except Exception as e:
+        logger.error(f"设置子 Agent 模型失败: {e}")
+        return _err(f"设置子 Agent 模型失败: {e}")
+
+
+@router.delete("/active/sub_agent")
+def clear_active_sub_agent():
+    """拔出子 Agent 模型，解除挂载。"""
+    logger.info("DELETE /base/active/sub_agent")
+    try:
+        ConfigStore.clear_active_sub_agent_model()
+        return _ok({"status": "cleared"}, "已拔出子 Agent 模型")
+    except Exception as e:
+        logger.error(f"拔出子 Agent 模型失败: {e}")
+        return _err(f"拔出子 Agent 模型失败: {e}")

@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from app.config import settings
-from app.api import agent, file, session, models, base, chat, conversations, branches
+from app.api import agent, file, session, models, base, chat, conversations, branches, task, directories
 from app.services.task_manager import task_manager
 from app.services.stream_manager import init_stream_manager
 from app.utils.http_client import close_http_client
@@ -40,6 +40,11 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Server port: {settings.server_port}")
     logger.info(f"API docs: http://localhost:{settings.server_port}/docs")
+
+    # 注册子智能体
+    from app.subagent.bootstrap import register_all_subagents
+    register_all_subagents()
+
     yield
     logger.info("Shutting down...")
     from app.services.stream_manager import get_stream_manager
@@ -74,6 +79,8 @@ app.include_router(base.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(branches.router)
+app.include_router(task.router)
+app.include_router(directories.router)
 
 
 # ===== 静态文件路由（纯 @app.get 方式，不用 mount） =====

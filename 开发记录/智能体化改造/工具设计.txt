@@ -1,0 +1,208 @@
+9.2 工具的统一接口
+Python
+
+# tool.py
+from __future__ import annotations
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
+import asyncio
+
+
+@dataclass
+class ToolResult:
+    """工具执行结果，output 会被塞进 SystemMessage(subtype='tool_result')"""
+    output: Any
+    is_error: bool = False
+
+
+class Tool(ABC):
+    """
+    每个工具都继承这个基类。三个抽象属性 + 一个抽象方法，
+    对应 TS 版本里最核心的四个字段（name/description/inputSchema/execute）。
+    """
+
+    name: str
+    description: str
+    input_schema: dict  # JSON Schema，双重用途：参数校验 + 给模型看的文档
+
+    @abstractmethod
+    async def execute(self, input: dict, context: "ToolUseContext") -> ToolResult:
+        """所有工具执行都是异步的，支持 I/O、网络请求等"""
+        ...
+
+    def needs_permission(self, input: dict) -> bool:
+        """
+        默认不需要用户确认。危险操作（写文件、执行命令）的子类应覆盖此方法，
+        返回 True 触发上层的 canUseTool 权限检查。
+        """
+        return False
+
+    def render_result(self, result: ToolResult) -> str:
+        """
+        CLI/日志场景下的简单文本渲染，替代原设计里的 renderToolUse (React JSX)。
+        以后如果做 Web UI，可以在这里返回结构化 dict 而不是字符串。
+        """
+        return str(result.output)
+
+    def to_openai_schema(self) -> dict:
+        """转换成 OpenAI function calling 需要的格式，供 QueryEngine 调用时使用"""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.input_schema,
+            },
+        }
+
+
+工具描述的艺术（直接照搬这个模式,这是最不该省的部分）
+工具描述的质量直接影响模型选对工具的概率，这一点无论用什么协议都成立,我把原文的 FileEditTool 描述范式原样落地:
+
+Python
+
+# tools/file_edit.py
+import os
+from tool import Tool, ToolResult, ToolUseContext
+
+
+class FileEditTool(Tool):
+    name = "file_edit"
+
+    # 描述遵循固定模式：适用场景 → 不适用场景 → 重要约束 → 前置条件
+    # 这四段缺一不可，是本章最该保留的"设计遗产"
+    description = """对文件进行精确的字符串替换。
+
+使用场景：修改现有文件的特定内容
+不适用：创建新文件（用 file_write 工具）、查看文件（用 file_read 工具）
+重要：old_string 必须在文件中唯一存在，否则会失败
+重要：必须先用 file_read 工具读取文件，确认 old_string 的确切内容"""
+
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "要编辑的文件路径"},
+            "old_string": {"type": "string", "description": "要被替换的原始字符串，必须在文件中唯一"},
+            "new_string": {"type": "string", "description": "替换后的新字符串"},
+        },
+        "required": ["path", "old_string", "new_string"],
+    }
+
+    def needs_permission(self, input: dict) -> bool:
+        return True  # 写操作，必须经过用户确认
+
+    async def execute(self, input: dict, context: ToolUseContext) -> ToolResult:
+        path = os.path.join(context.cwd, input["path"])
+        if not os.path.exists(path):
+            return ToolResult(output=f"文件不存在: {path}", is_error=True)
+
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+
+        occurrences = content.count(input["old_string"])
+        if occurrences == 0:
+            return ToolResult(output="old_string 在文件中未找到", is_error=True)
+        if occurrences > 1:
+            return ToolResult(
+                output=f"old_string 在文件中出现了 {occurrences} 次，必须唯一才能替换",
+                is_error=True,
+            )
+
+        new_content = content.replace(input["old_string"], input["new_string"])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        return ToolResult(output=f"已成功编辑 {input['path']}")
+
+
+
+9.5 工具注册与发现
+Python
+
+# tools/__init__.py
+from tool import Tool
+from tools.file_read import FileReadTool
+from tools.file_edit import FileEditTool
+from tools.file_write import FileWriteTool
+from tools.bash import BashTool
+from tools.grep import GrepTool
+
+
+@dataclass
+class GetToolsOptions:
+    enable_bash: bool = True
+    enable_file_write: bool = True
+    disabled_tools: set[str] = field(default_factory=set)
+
+
+def get_tools(options: GetToolsOptions) -> list[Tool]:
+    """
+    工具列表在会话开始时构建一次，之后通过 to_openai_schema() 转成
+    OpenAI function calling 格式传给模型。模型看到的只是 name/description/schema，
+    看不到 execute 的具体实现——这一点和原设计完全一致。
+    """
+    tools: list[Tool] = [
+        FileReadTool(),
+        FileEditTool(),
+        GrepTool(),
+    ]
+
+    if options.enable_file_write:
+        tools.append(FileWriteTool())
+    if options.enable_bash:
+        tools.append(BashTool())
+
+    return [t for t in tools if t.name not in options.disabled_tools]
+与 QueryEngine 的集成（替换之前 _run_tools_parallel 里手写的逻辑）
+Python
+
+# query_engine.py（关键片段更新）
+from tool import Tool, ToolUseContext, ToolResult
+
+
+class QueryEngine:
+    def __init__(self, config):
+        self.config = config
+        self.tools: list[Tool] = config.tools  # 现在是 list[Tool]，不是裸的 dict/协议
+        ...
+
+    def _build_tool_use_context(self) -> ToolUseContext:
+        return ToolUseContext(
+            cwd=self.config.cwd,
+            abort_event=self.abort_event,
+            messages=tuple(self.state.messages),
+        )
+
+    def _build_tool_schemas(self) -> list[dict]:
+        return [t.to_openai_schema() for t in self.tools]
+
+    async def _run_tools_parallel(self, tool_calls: list[dict]) -> list[ToolResultBlock]:
+        context = self._build_tool_use_context()
+
+        async def run_one(tc: dict) -> ToolResultBlock:
+            tool = next((t for t in self.tools if t.name == tc["name"]), None)
+            if tool is None:
+                return ToolResultBlock(tool_use_id=tc["id"], content=f"未知工具: {tc['name']}", is_error=True)
+
+            # --- 权限检查 ---
+            if tool.needs_permission(tc["input"]):
+                if not self.config.can_use_tool(tool.name, tc["input"]):
+                    self.permission_denials.append({"tool": tool.name, "input": tc["input"]})
+                    return ToolResultBlock(
+                        tool_use_id=tc["id"], content="用户拒绝了该操作", is_error=True
+                    )
+
+            # --- 中断检查 ---
+            if context.is_aborted():
+                return ToolResultBlock(tool_use_id=tc["id"], content="已中断", is_error=True)
+
+            try:
+                result: ToolResult = await tool.execute(tc["input"], context)
+                return ToolResultBlock(
+                    tool_use_id=tc["id"], content=result.output, is_error=result.is_error
+                )
+            except Exception as e:
+                return ToolResultBlock(tool_use_id=tc["id"], content=str(e), is_error=True)
+
+        return await asyncio.gather(*(run_one(tc) for tc in tool_calls))

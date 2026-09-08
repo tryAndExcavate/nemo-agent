@@ -1,0 +1,16 @@
+{
+  "workspace_path": "C:\\Users\\000\\Desktop\\测试Agent",
+  "model": "Qwen3.8-27b",
+  "goal": "你好",
+  "total_input_tokens": 254128,
+  "total_output_tokens": 29146,
+  "status": "done",
+  "start_time": 1788857995.6918733,
+  "end_time": 1788859195.1410012,
+  "duration_sec": 1199.4,
+  "ctx_system_tokens": 179,
+  "ctx_history_tokens": 32849,
+  "ctx_tool_def_tokens": 2069,
+  "ctx_tool_result_tokens": 29315,
+  "ctx_input_tokens": 0
+}
