@@ -341,8 +341,3 @@ app/
 
 ---
 
-**简短版本（适合技术简历的单段介绍）**：
-
-> **Nemo - 为小模型设计的多任务生产级Agent** (Python/FastAPI/Vue3)  
-> **N**arrow context · **E**fficient memory · **M**ulti-agent · **O**rchestration  
-> 设计并实现企业级多智能体 AI 对话平台，集成 5 种专业 Agent（联网搜索、文件问答、深度研究、PPT 生成、任务管理），支持子智能体动态派遣与隔离执行。采用 Redis Stream 实现分布式任务流转与状态管理，设计三层上下文压缩机制解决长对话问题，通过 SSE + heartbeat 保活机制实现实时流式响应。项目从 Spring Boot 重构至 FastAPI，支持 Vue3 渐进式迁移架构。
