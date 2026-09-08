@@ -4,40 +4,100 @@
 
 基于 FastAPI 的 Python 重构版本，原项目为 Spring Boot 3.2 + Spring AI (Java)。
 
-## 功能
+## 🎉 最近更新
 
-### Agent 能力
+### v2.0 - 子智能体系统 & 任务管理（2024年9月）
+
+✨ **重大功能更新**：
+
+1. **子智能体系统** - 新增 `subagent/memory` 模块，实现派遣调度、深度环检测、只读隔离记忆；memory-retriever 子智能体带执行预算限制，独立 QueryEngine 无残留落盘
+
+2. **QueryEngine 任务模式** - Global/QueryEngine 双层状态，任务启停锁、Redis Stream 事件流转、AOP 切面记忆 Agent 开关接口与前端控制
+
+3. **对话分支管理** - 分支手风琴功能：新增/删除分支、拖拽删除分支、草稿分支编辑器，支持递归删除和活跃状态恢复
+
+4. **SSE 流保活与竞态修复** - 60s heartbeat 保活、CancelledError 处理、修正 `_persist` 逻辑避免旧任务 done 事件污染
+
+5. **任务统计** - Token、耗时采集、done 事件输出、meta 持久化、前端统计徽章展示
+
+6. **UI 优化** - 新增新建任务按钮、子 Agent 模型插槽、接口补充统计字段
+
+---
+
+## 功能特性
+
+### 🤖 Agent 能力
+
 - **Web Search Agent** (`/agent/chat/stream`) — 联网搜索智能问答，使用 Tavily 搜索引擎
 - **File Q&A Agent** (`/agent/file/stream`) — 文件内容问答，支持 PDF/DOCX/TXT/图片
 - **Skills Agent** (`/agent/skills/stream`) — 全能型智能体，集成搜索+文件+技能+文件系统工具
 - **Deep Research Agent** (`/agent/deep/stream`) — 深度研究，Plan-Execute-Critique 模式
 - **PPT Builder Agent** (`/agent/pptx/stream`) — 模板驱动PPT自动生成
+- **QueryEngine Agent** (`/agent/task/stream`) — 任务模式，支持任务启停锁、Redis Stream事件流转
 
-### 上下文长对话管理 🧠
+### 🔄 子智能体系统 (SubAgent)
+
+- **派遣调度** — 动态派遣子智能体处理特定任务
+- **深度环检测** — 防止子智能体循环调用
+- **只读隔离记忆** — 子智能体拥有独立的隔离记忆空间
+- **memory-retriever 子智能体** — 带执行预算限制的内存检索子智能体
+- **独立 QueryEngine** — 子智能体使用独立的 QueryEngine，执行完即销毁，无残留落盘
+- **可插拔模型** — 支持为子智能体配置独立的模型
+
+### 🌳 对话分支管理
+
+- **分支手风琴** — 手风琴标签栏"＋ 新增分支"按钮（depth0 竖排 rail + depth≥1 横排 pill）
+- **并排分支** — 工具栏"➕ 新增并排分支"按钮，跟随当前活跃节点层级创建
+- **草稿分支编辑器** — textarea + 发送/取消 + draft-badge 徽章
+- **拖拽删除分支** — rail 标签向右拖 / pill 标签向上拖，超阈值变红飞走
+- **递归删除** — 后端自动递归删后代 + 恢复活跃状态
+
+### 📊 任务管理与统计
+
+- **任务模式** — Global/QueryEngine 双层状态管理
+- **任务启停锁** — Redis 分布式锁，确保任务互斥执行
+- **Token 统计** — 流式调用实时统计输入/输出 tokens 和成本
+- **耗时采集** — 任务执行耗时自动采集
+- **done 事件输出** — 任务完成事件持久化和前端展示
+- **统计徽章** — 前端展示任务统计信息（Token、耗时、成本）
+
+### 🔄 SSE 流保活与竞态修复
+
+- **60s heartbeat 保活** — 长连接心跳检测，防止连接超时
+- **CancelledError 处理** — 客户端断开时优雅处理
+- **竞态修复** — 修正 `_persist` 逻辑，避免旧任务 done 事件污染
+
+### 🧠 上下文长对话管理
+
 - **Token 计数器** — tiktoken + 粗略估算双模式中文计数
 - **触发判断器** — 达到阈值（默认 70%）自动触发压缩
 - **BM25 召回器** — jieba 中文分词 + rank_bm25 相关信息检索
 - **三层压缩器** — 近期窗口（Tier1）+ BM25 召回（Tier2）+ 摘要压缩（Tier3）
 - **摘要持久化** — 摘要结果保存至 `context_summaries` 表，支持历史召回
 
-### Token 消耗统计 ⚡
+### ⚡ Token 消耗统计
+
 - 流式调用实时统计输入/输出 tokens 和成本
 - 前端展示用量明细（输入/输出/总计/成本）
 - JSONL 格式按日分割的用量日志
 
-### 摘要模型可插拔 🔌
+### 🔌 摘要模型可插拔
+
 - 蓝图页面可配置/清除摘要基座模型
 - 会话首次对话后异步调用摘要模型生成标题（不阻塞回复）
 
-### 多会话管理 💬
+### 💬 多会话管理
+
 - **conversations 表** — 活跃会话，`status` 字段标记最后活跃会话并自动上提排序
 - **archived_conversations 表** — 归档会话，支持恢复/永久删除（级联清理关联数据）
 - **前端侧边栏** — 对话/归档 Tab 切换、下拉菜单（修改标题/归档）、二次确认删除
 - 完整 REST API：列表/创建/激活/重命名/归档/恢复/删除
 
-### 其他管理
+### 🔧 其他管理
+
 - 会话管理 (`/session/*`) — 会话查询、列表、删除
 - 文件管理 (`/file/*`) — 文件上传、查询、内容获取、删除
+- 模型管理 (`/models/*`) — 模型配置、可插拔基座模型
 
 ## 快速开始
 
@@ -131,17 +191,31 @@ app/
 ├── database.py          # SQLAlchemy async engine & session
 ├── api/                 # REST API 路由
 │   ├── agent.py         # 5 个 SSE 流式端点 + /stop
-│   ├── file.py          # 文件 CRUD 端点
-│   ├── session.py       # 会话 CRUD 端点
+│   ├── base.py          # 摘要模型可插拔配置端点
+│   ├── branches.py      # 对话分支 CRUD 端点
+│   ├── chat.py          # 对话端点
 │   ├── conversations.py # 多会话管理端点（活跃/归档/激活/重命名/删除）
-│   └── base.py          # 摘要模型可插拔配置端点
+│   ├── directories.py   # 目录管理端点
+│   ├── file.py          # 文件 CRUD 端点
+│   ├── models.py        # 模型配置端点
+│   ├── session.py       # 会话 CRUD 端点
+│   └── task.py          # 任务管理端点（启动/停止/查询）
 ├── agents/              # Agent 实现
 │   ├── base.py          # BaseAgent 基类（usage 累加 + 压缩器懒加载）
 │   ├── web_search.py    # WebSearchReActAgent
 │   ├── file_qa.py       # FileReActAgent
 │   ├── skills.py        # SkillsReActAgent
 │   ├── deep_research.py # PlanExecuteAgent
-│   └── ppt_builder.py   # PPTBuilderAgent
+│   ├── ppt_builder.py   # PPTBuilderAgent
+│   └── query_engine.py  # QueryEngine 任务模式实现
+├── subagent/            # 子智能体系统
+│   ├── bootstrap.py     # 子智能体引导和初始化
+│   ├── definition.py    # 子智能体定义数据结构
+│   ├── policy.py        # 子智能体派遣策略（深度环检测等）
+│   ├── registry.py      # 子智能体注册中心
+│   └── runner.py        # 子智能体执行器（隔离 QueryEngine）
+├── memory/              # 记忆系统
+│   └── ...              # 子智能体只读隔离记忆实现
 ├── prompts/             # 提示词模板
 │   ├── base.py          # 通用提示词
 │   ├── react.py         # Web/File/Skills 提示词
@@ -178,6 +252,7 @@ app/
 │   ├── grep_tool.py     # 正则搜索工具
 │   ├── bash_tool.py     # Shell 命令工具
 │   └── skills_tool.py   # 技能加载工具
+├── storage/             # 存储管理
 ├── llm_core/            # LLM 核心
 │   ├── store.py         # 模型配置存储（含摘要模型）
 │   ├── manager.py       # 模型适配器管理
@@ -206,9 +281,10 @@ app/
 - **Web Framework**: FastAPI + Uvicorn
 - **LLM**: OpenAI SDK → DashScope (通义千问)
 - **Database**: SQLAlchemy 2.0 async + aiomysql (MySQL)
-- **Vector Store**: pgvector (PostgreSQL)
-- **Cache/Lock**: Redis
+- **Cache/Lock**: Redis（任务锁、SSE Stream、事件流转）
 - **Object Storage**: MinIO
 - **File Parsing**: pypdf + python-docx + python-pptx
 - **Context**: rank_bm25 + jieba (中文检索)
 - **Frontend**: Vue 3 — 旧版走 CDN 单页（`app/static/`，FastAPI 直接托管）；新版工程 `frontend/` 走 Vite + SFC（迁移中），Marked + Highlight.js + DOMPurify
+- **流式通信**: SSE (Server-Sent Events) + Heartbeat 保活
+- **子智能体**: 隔离 QueryEngine + 只读记忆 + 深度环检测
