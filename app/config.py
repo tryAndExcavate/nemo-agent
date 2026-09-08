@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     mysql_port: int = 3306
     mysql_user: str = "root"
     mysql_password: str = "root"
-    mysql_database: str = "dodo"
+    mysql_database: str = "nemo"
 
     # Redis
     redis_host: str = "127.0.0.1"

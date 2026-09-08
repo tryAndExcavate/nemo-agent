@@ -1,12 +1,18 @@
-# dodo-agent (Python/FastAPI Edition)
+# Nemo - 为小模型设计的多任务生产级Agent
 
-豆豆智能体 — 多智能体AI平台
+**N**arrow context · **E**fficient memory · **M**ulti-agent · **O**rchestration
 
-基于 FastAPI 的 Python 重构版本，原项目为 Spring Boot 3.2 + Spring AI (Java)。
+
+## 命名含义
+
+- **N - Narrow context（窄上下文）** — 面对小模型的现实约束，通过精准的上下文压缩与检索提升对话质量
+- **E - Efficient memory（高效记忆）** — 按需检索，不浪费，通过精准召回与摘要压缩实现记忆的高效利用
+- **M - Multi-agent（多智能体）** — 子 Agent 系统，支持动态派遣调度、只读隔离记忆、深度环检测
+- **O - Orchestration（编排）** — 主 Agent 调度记忆 Agent，通过 QueryEngine 任务模式实现复杂任务编排
 
 ## 🎉 最近更新
 
-### v2.0 - 子智能体系统 & 任务管理（2024年9月）
+### v2.0 - 子智能体系统 & 任务管理（2026年9月）
 
 ✨ **重大功能更新**：
 
@@ -65,7 +71,7 @@
 
 - **60s heartbeat 保活** — 长连接心跳检测，防止连接超时
 - **CancelledError 处理** — 客户端断开时优雅处理
-- **竞态修复** — 修正 `_persist` 逻辑，避免旧任务 done 事件污染
+- **竞态修复** — 避免旧任务 done 事件污染
 
 ### 🧠 上下文长对话管理
 
@@ -141,13 +147,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8888 --reload
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8888 --reload
-# 浏览器打开 http://localhost:8888
 ```
 
 依赖 CDN：Vue 3、Marked、Highlight.js、DOMPurify、Font Awesome（全部走 `<script>/<link>` CDN）。
 前端脚本：`app/static/js/{config,constants,utils,api,app}.js`（全局挂载到 `window.*`）。
 
-### 二、新版 Vue3 工程（Vite，迁移中）
+### 二、新版 Vue3 工程
 
 位于 `frontend/`，用于逐步把单页拆分为标准 SFC 组件。要求 Node.js ≥ 18。
 
@@ -288,3 +293,56 @@ app/
 - **Frontend**: Vue 3 — 旧版走 CDN 单页（`app/static/`，FastAPI 直接托管）；新版工程 `frontend/` 走 Vite + SFC（迁移中），Marked + Highlight.js + DOMPurify
 - **流式通信**: SSE (Server-Sent Events) + Heartbeat 保活
 - **子智能体**: 隔离 QueryEngine + 只读记忆 + 深度环检测
+
+---
+
+## 📋 简历项目介绍
+
+### **Nemo - 为小模型设计的多任务生产级Agent**
+
+**项目周期**：2024年 - 至今  
+**技术栈**：Python | FastAPI | Vue3 | Redis | MySQL | SQLAlchemy | SSE
+
+#### 项目简介
+基于 FastAPI 构建的企业级多智能体 AI 对话平台（Nemo：**N**arrow context · **E**fficient memory · **M**ulti-agent · **O**rchestration），支持联网搜索、文件问答、深度研究、PPT 自动生成、子智能体派遣等多种 AI 能力，实现复杂任务的智能分解与执行。
+
+#### 核心职责与技术亮点
+
+**1. 子智能体系统设计与实现（Multi-agent & Orchestration）**
+- 设计并实现了可扩展的子智能体框架，支持动态派遣调度、深度环检测防止循环调用
+- 实现只读隔离记忆机制，确保子智能体拥有独立的上下文空间，支持预算限制的资源控制
+- 采用独立 QueryEngine 架构，子智能体执行完即销毁，避免状态残留
+
+**2. 任务管理与分布式锁机制（Orchestration）**
+- 设计 Global/QueryEngine 双层状态管理模型，基于 Redis 实现任务启停锁和分布式互斥
+- 构建 Redis Stream 事件流转系统，实现异步任务的实时状态追踪与事件分发
+- 集成 Token 统计、耗时采集、done 事件持久化，支持前端实时展示任务统计信息
+
+**3. 上下文长对话管理（Narrow context & Efficient memory）**
+- 设计三层上下文压缩机制：近期窗口 + BM25 召回 + 摘要压缩，自动触发压缩（70% 阈值）
+- 实现基于 jieba 分词和 rank_bm25 的中文语义检索，支持摘要持久化与历史召回
+- 通过 tiktoken + 粗略估算双模式实现精准的 Token 计数
+
+**4. SSE 流式通信与竞态修复**
+- 实现 60s heartbeat 保活机制，防止长连接超时断开
+- 处理 CancelledError 异常，实现客户端断开时的优雅降级
+- 修正竞态问题，避免旧任务 done 事件污染新任务状态
+
+**5. 前端架构与组件化**
+- 采用 Vue3 + Vite 渐进式迁移架构，实现旧版 CDN 单页与新版 SFC 工程的平滑切换
+- 设计对话分支管理系统（分支手风琴、草稿编辑器、拖拽删除），支持递归删除和活跃状态恢复
+- 实现 SSE 流式展示、任务统计徽章、多会话管理（活跃/归档/恢复）
+
+#### 核心技术栈
+- **后端**：FastAPI + SQLAlchemy 2.0 (async) + Redis + MySQL + MinIO
+- **前端**：Vue3 + Vite + Marked + Highlight.js + DOMPurify
+- **AI/LLM**：OpenAI SDK + DashScope (通义千问) + Tavily Search
+- **通信**：SSE (Server-Sent Events) + REST API
+
+---
+
+**简短版本（适合技术简历的单段介绍）**：
+
+> **Nemo - 为小模型设计的多任务生产级Agent** (Python/FastAPI/Vue3)  
+> **N**arrow context · **E**fficient memory · **M**ulti-agent · **O**rchestration  
+> 设计并实现企业级多智能体 AI 对话平台，集成 5 种专业 Agent（联网搜索、文件问答、深度研究、PPT 生成、任务管理），支持子智能体动态派遣与隔离执行。采用 Redis Stream 实现分布式任务流转与状态管理，设计三层上下文压缩机制解决长对话问题，通过 SSE + heartbeat 保活机制实现实时流式响应。项目从 Spring Boot 重构至 FastAPI，支持 Vue3 渐进式迁移架构。

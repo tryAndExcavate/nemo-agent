@@ -1,5 +1,5 @@
 <script setup>
-// ===== dodo-agent App.vue —— 从旧单页 (app.js setup + index.html #app) 机械迁移的骨架版 =====
+// ===== Nemo App.vue —— 从旧单页 (app.js setup + index.html #app) 机械迁移的骨架版 =====
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import hljs from 'highlight.js'
 import { APP_CONFIG } from './lib/config.js'
@@ -2623,7 +2623,7 @@ import { APP_UTILS } from './lib/utils.js'
                 <div class="sidebar-header">
                     <div class="app-title">
                         <span class="logo-icon">🌱</span>
-                        <span class="title-text">豆豆</span>
+                        <span class="title-text">Nemo</span>
                     </div>
                     <button class="new-chat-btn" @click="createNewChat">
                         <i class="fas fa-plus"></i>
@@ -2748,7 +2748,7 @@ import { APP_UTILS } from './lib/utils.js'
                         <div class="tm-empty">
                             <div class="tm-empty-icon">🧭</div>
                             <h2>布置一个任务</h2>
-                            <p>描述目标并选择工作区，豆豆会自主规划、调用工具完成任务</p>
+                            <p>描述目标并选择工作区，Nemo会自主规划、调用工具完成任务</p>
                             <textarea class="tm-goal-input" v-model="taskGoalDraft"
                                 placeholder="例如：帮我梳理 /project 目录下的接口文档，并生成一份 API 变更清单"></textarea>
                             <div class="tm-templates">
@@ -3133,7 +3133,7 @@ import { APP_UTILS } from './lib/utils.js'
                             <div class="empty-icon">🤖</div>
                             <div class="icon-glow"></div>
                         </div>
-                        <h2>你好，我是豆豆</h2>
+                        <h2>你好，我是Nemo</h2>
                         <p>有什么可以帮助你的吗？</p>
                         <div class="quick-actions">
                             <div class="quick-action" @click="quickPrompt('介绍一下你自己')">

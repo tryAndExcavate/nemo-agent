@@ -23,7 +23,7 @@ logger.info(f"index.html exists: {(STATIC_DIR / 'index.html').exists()}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting dodo-agent API server...")
+    logger.info("Starting Nemo API server...")
     await task_manager.start()
 
     # 初始化 Redis Stream 管理器
@@ -56,8 +56,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="dodo-agent API",
-    description="豆豆智能体 - 多智能体AI平台 API",
+    title="Nemo API",
+    description="Nemo - 为小模型设计的多任务生产级Agent API",
     version="1.0.0",
     lifespan=lifespan,
 )

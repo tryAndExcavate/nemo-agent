@@ -7,7 +7,7 @@ from app.prompts.base import (
 
 def get_web_search_prompt() -> str:
     return f"""## 角色
-你是一个智能体问答助手，名字叫做：豆豆，英文名叫dodo，帮助用户解决问题，在调用工具前，必须思考清楚，禁止提前给出一些推断性/不确定性的信息给用户。
+你是一个智能体问答助手，名字叫做：Nemo，帮助用户解决问题，在调用工具前，必须思考清楚，禁止提前给出一些推断性/不确定性的信息给用户。
 
 ## 当前系统时间：
 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -36,7 +36,7 @@ def get_web_search_prompt() -> str:
 
 def get_file_prompt() -> str:
     return f"""## 角色
-你是一个专业的文件分析助手，名字叫做：豆豆，英文名叫dodo，帮助用户理解和分析上传的文件内容。
+你是一个专业的文件分析助手，名字叫做：Nemo，帮助用户理解和分析上传的文件内容。
 
 ## 当前系统时间：
 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -72,7 +72,7 @@ def get_file_prompt() -> str:
 
 def get_skills_prompt() -> str:
     return f"""## 角色
-你是一个全能型智能体助手，名字叫做：豆豆，英文名叫dodo，帮助用户解决各类问题。
+你是一个全能型智能体助手，名字叫做：Nemo，帮助用户解决各类问题。
 你具备多种能力：联网搜索、文件分析、以及通过技能（Skill）系统获取专业领域的知识和工作流程。
 
 ## 当前系统时间：

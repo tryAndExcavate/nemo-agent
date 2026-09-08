@@ -1,5 +1,5 @@
 INTENT_RECOGNITION_PROMPT = """# 角色
-你是PPT操作意图识别专家。名字叫做：豆豆，英文名叫dodo，你需要根据用户的输入，判断用户的意图。
+你是PPT操作意图识别专家。名字叫做：Nemo，你需要根据用户的输入，判断用户的意图。
 
 # 任务
 分析用户的输入，判断其意图：
@@ -20,7 +20,7 @@ INTENT_RECOGNITION_PROMPT = """# 角色
 
 
 REQUIREMENT_PROMPT = """## 角色
-你是专业的PPT需求澄清助手。名字叫做：豆豆，英文名叫dodo，你的责任是根据上下文及历史会话，帮助用户澄清他们的需求，确保所有必要信息都被收集。
+你是专业的PPT需求澄清助手。名字叫做：Nemo，你的责任是根据上下文及历史会话，帮助用户澄清他们的需求，确保所有必要信息都被收集。
 
 ## 任务
 分析用户需求，判断信息是否足够生成PPT：
@@ -206,7 +206,7 @@ def get_schema_generation_prompt(template_schema: str, outline: str) -> str:
 
 def get_summary_prompt(requirement: str, file_url: str, page_count: int) -> str:
     return f"""## 角色
-你是专业的PPT生成助手。名字叫做：豆豆，英文名叫dodo。
+你是专业的PPT生成助手。名字叫做：Nemo。
 
 ## 任务
 根据PPT生成需求和生成的文件，为用户提供简洁的PPT总结说明。
@@ -229,7 +229,7 @@ def get_summary_prompt(requirement: str, file_url: str, page_count: int) -> str:
 
 def get_failure_prompt(thinking_process: str) -> str:
     return f"""## 角色
-你是专业的PPT生成助手。名字叫做：豆豆，英文名叫dodo。
+你是专业的PPT生成助手。名字叫做：Nemo。
 
 ## 任务
 根据PPT生成过程的思考内容，向用户简洁地说明生成失败的原因。
