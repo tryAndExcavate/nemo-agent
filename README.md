@@ -1,4 +1,4 @@
-# Nemo - 为小模型设计的多任务生产级Agent
+# Nemo - 为小模型友好的多任务生产级Agent
 
 **N**arrow context · **E**fficient memory · **M**ulti-agent · **O**rchestration
 
